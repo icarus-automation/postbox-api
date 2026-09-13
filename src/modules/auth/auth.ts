@@ -7,6 +7,11 @@ import { organization } from 'better-auth/plugins';
 
 import { env } from '../../core/config/env.config';
 import { prisma } from '../../core/database/prisma.service';
+import { provisionLeadSystemFields } from '../leads/lead-system-fields';
+import {
+  getUserOrganizationId,
+  provisionPersonalOrganization,
+} from './organization-provisioning';
 
 const SINGLE_ORGANIZATION_MESSAGE = 'Users can belong to only one organization';
 
@@ -61,10 +66,38 @@ export const auth = betterAuth({
       joins: true,
     },
   },
+  databaseHooks: {
+    user: {
+      create: {
+        after: async (user) => {
+          await provisionPersonalOrganization(prisma, user);
+        },
+      },
+    },
+    session: {
+      create: {
+        before: async (session) => {
+          const organizationId = await getUserOrganizationId(
+            prisma,
+            session.userId,
+          );
+
+          if (!organizationId) return;
+
+          return { data: { ...session, activeOrganizationId: organizationId } };
+        },
+      },
+    },
+  },
   plugins: [
     organization({
       organizationLimit: 1,
       organizationHooks: {
+        // Sign-up provisioning seeds these itself. This covers an organization
+        // created through the organization API, such as after deleting one.
+        afterCreateOrganization: async ({ organization }) => {
+          await provisionLeadSystemFields(prisma, organization.id);
+        },
         beforeCreateInvitation: async ({ invitation }) => {
           const invitedUser = await prisma.user.findUnique({
             where: { email: invitation.email.toLowerCase() },

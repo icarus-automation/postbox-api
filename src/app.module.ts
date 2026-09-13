@@ -11,6 +11,8 @@ import { AppService } from './app.service';
 import { PrismaModule } from './core/database/prisma.module';
 import { UsersModule } from './modules/users/users.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { ApiKeysModule } from './modules/api-keys/api-keys.module';
+import { LeadsModule } from './modules/leads/leads.module';
 
 @Module({
   imports: [
@@ -19,6 +21,8 @@ import { AuthModule } from './modules/auth/auth.module';
     PrismaModule,
     UsersModule,
     AuthModule,
+    ApiKeysModule,
+    LeadsModule,
   ],
   controllers: [AppController],
   providers: [

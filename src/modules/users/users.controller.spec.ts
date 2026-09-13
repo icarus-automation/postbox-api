@@ -1,16 +1,9 @@
 import { NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 
-import type { Auth } from '../auth/auth';
-import type { UserSession } from '@thallesp/nestjs-better-auth';
+import type { OrganizationSession } from '../auth/types/auth.types';
 import { UsersController } from './users.controller';
 import { UsersService } from './users.service';
-
-type OrganizationSession = UserSession<Auth> & {
-  session: {
-    activeOrganizationId: string;
-  };
-};
 
 describe('UsersController', () => {
   const getUser = jest.fn<UsersService['getUser']>();

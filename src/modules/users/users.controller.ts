@@ -1,19 +1,9 @@
 import { Controller, Get, NotFoundException, Param } from '@nestjs/common';
-import {
-  OrgRoles,
-  Session,
-  type UserSession,
-} from '@thallesp/nestjs-better-auth';
+import { OrgRoles, Session } from '@thallesp/nestjs-better-auth';
 
-import type { Auth } from '../auth/auth';
+import type { OrganizationSession } from '../auth/types/auth.types';
 import type { OrganizationUser } from './types/users.types';
 import { UsersService } from './users.service';
-
-type OrganizationSession = UserSession<Auth> & {
-  session: {
-    activeOrganizationId: string;
-  };
-};
 
 @OrgRoles(['owner', 'admin', 'member'])
 @Controller('users')

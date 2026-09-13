@@ -18,6 +18,7 @@ model User {
   accounts      Account[]
   members       Member[]
   invitations   Invitation[]
+  apiKeys       ApiKey[]
 
   @@map("users")
 }
@@ -71,14 +72,17 @@ model Verification {
 }
 
 model Organization {
-  id          String       @id
-  name        String
-  slug        String       @unique
-  logo        String?
-  createdAt   DateTime     @map("created_at")
-  metadata    String?
-  members     Member[]
-  invitations Invitation[]
+  id               String            @id
+  name             String
+  slug             String            @unique
+  logo             String?
+  createdAt        DateTime          @map("created_at")
+  metadata         String?
+  members          Member[]
+  invitations      Invitation[]
+  apiKeys          ApiKey[]
+  fieldDefinitions FieldDefinition[]
+  leads            Lead[]
 
   @@map("organizations")
 }
@@ -120,4 +124,88 @@ model RateLimit {
   lastRequest BigInt @map("last_request")
 
   @@map("rate_limits")
+}
+model ApiKey {
+  id             String       @id @default(uuid(7))
+  name           String
+  keyPrefix      String       @map("key_prefix")
+  keyHash        String       @unique @map("key_hash")
+  organizationId String       @map("organization_id")
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdById    String       @map("created_by_id")
+  createdBy      User         @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  lastUsedAt     DateTime?    @map("last_used_at")
+  revokedAt      DateTime?    @map("revoked_at")
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+
+  @@index([organizationId])
+  @@index([createdById])
+  @@map("api_keys")
+}
+
+// The record types whose attributes are described by field definitions.
+enum FieldCollection {
+  lead
+
+  @@map("field_collection")
+}
+
+enum FieldType {
+  text
+  long_text
+  number
+  select
+  url
+  date
+  datetime
+
+  @@map("field_type")
+}
+
+model FieldDefinition {
+  id             String          @id @default(uuid(7))
+  organizationId String          @map("organization_id")
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  collection     FieldCollection
+  key            String
+  label          String
+  type           FieldType
+  options        String[]        @default([])
+  isRequired     Boolean         @default(false) @map("is_required")
+  isReadOnly     Boolean         @default(false) @map("is_read_only")
+  isSystem       Boolean         @default(false) @map("is_system")
+  position       Int
+  createdAt      DateTime        @default(now()) @map("created_at")
+  updatedAt      DateTime        @updatedAt @map("updated_at")
+  leadValues     LeadValue[]
+
+  @@unique([organizationId, collection, key])
+  @@index([organizationId, collection, position])
+  @@map("field_definitions")
+}
+
+model Lead {
+  id             String       @id @default(uuid(7))
+  organizationId String       @map("organization_id")
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  values         LeadValue[]
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+
+  @@index([organizationId, createdAt])
+  @@map("leads")
+}
+
+// One row per filled field. Deleting a field definition deletes its values.
+model LeadValue {
+  leadId  String          @map("lead_id")
+  lead    Lead            @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  fieldId String          @map("field_id")
+  field   FieldDefinition @relation(fields: [fieldId], references: [id], onDelete: Cascade)
+  value   Json
+
+  @@id([leadId, fieldId])
+  @@index([fieldId])
+  @@map("lead_values")
 }
