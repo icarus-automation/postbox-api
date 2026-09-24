@@ -36,4 +36,12 @@ export default tseslint.config(
       '@typescript-eslint/require-await': 'off',
     },
   },
+  {
+    files: ['**/*.spec.ts'],
+    rules: {
+      // Tests pass mock methods around on purpose. A mock has no `this` to lose,
+      // so this rule only fires on the way mocking libraries are meant to work.
+      '@typescript-eslint/unbound-method': 'off',
+    },
+  },
 );

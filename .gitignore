@@ -59,3 +59,7 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
 # Build info
 *.tsbuildinfo
+
+# Verification harness runtime and proof dumps
+.cursor/skills/verify-cms-api/run/
+.cursor/skills/verify-cms-api/artifacts/*/

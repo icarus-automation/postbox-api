@@ -20,7 +20,7 @@ Record attributes come from organization-scoped field definitions per collection
 
 ## Repository Map
 
-- `src/modules`: business features such as auth, users, api keys and leads
+- `src/modules`: business features such as auth, api keys and leads
 - `src/core`: infrastructure, configuration, database, health, and security
 - `src/common`: shared transport concerns with no feature-specific business logic
 - `prisma/schema.prisma`: database model
@@ -62,21 +62,30 @@ Record attributes come from organization-scoped field definitions per collection
 - Browser authentication uses HTTP-only session cookies.
 - Users can belong to one organization. Hooks reject extra memberships and `Member.userId` stays unique.
 - Sign-up provisions that organization, named `{user}'s organization`, and every session carries it as `activeOrganizationId`. Clients never call organization create or set-active. See `src/modules/auth/organization-provisioning.ts`.
+- Better Auth creates the organization and its owner membership. Application code only chooses the name and slug and backfills the session. `afterCreateOrganization` is the one path that seeds lead system fields.
+- `OrganizationProvisioningHook` registers the sign-up hook, and the Nest integration only wires it when the application starts. Anything calling `auth.api.signUpEmail` outside a running Nest app, the seed included, must boot an application context first or it creates a user with no organization.
 - Better Auth runs `user.create.after` only once the sign-up transaction commits, which is after the sign-up session row exists. Provisioning backfills that session instead of assuming hook order.
+- There is no users module. Member reads come from Better Auth's `/api/v1/auth/organization/list-members` and `get-full-organization`.
 - Organization-scoped controllers require `@OrgRoles()` or `@MemberHasPermission()`.
 - Scope every tenant query by the authenticated session's `activeOrganizationId`.
 - Never return or log account password hashes. Never log session tokens.
 - `main.ts` owns CORS. Allowed headers are `Content-Type` and `Authorization` only, so a browser cannot send `x-api-key`. Keep it that way.
 - Machine callers authenticate with a long-lived API key in the `x-api-key` header. `ApiKeyGuard` owns that check, and those routes carry `@AllowAnonymous()` so the session guard steps aside. Lead reads (`GET /api/v1/leads`, `/leads/:id`, `/leads/fields`) take a session or a key through `@SessionOrApiKey()`, so agents can dedupe before posting.
-- API keys are stored as SHA-256 hashes. Creation returns the raw key once and nothing reads it again. Never return or log a raw key or a key hash.
-- Keys are minted over HTTP by an `owner` or `admin` session. There is no key admin UI.
+- The Better Auth API key plugin owns key generation, hashing, storage, verification and last-use tracking. `ApiKeysService` and `ApiKeyGuard` are adapters over it and never query `api_keys` directly.
+- The plugin runs one unnamed configuration, `ORGANIZATION_API_KEY_CONFIG_ID` in `src/modules/auth/api-key-config.ts`, with `references: 'organization'`. `ApiKeyGuard` pins verification to it, because it reads a verified key's `referenceId` as an organization id. A second configuration has to revisit that guard.
+- The organization plugin carries a custom `apiKey` statement in `src/modules/auth/organization-access.ts`. `owner` and `admin` manage keys, `member` never does. The stock Better Auth roles do not include that statement, so the roles must stay redeclared there.
+- Creation returns the raw key once and nothing reads it again. Never return or log a raw key or a key hash.
+- Keys are minted over HTTP by an `owner` or `admin` session. There is no key admin UI. Revoking disables the key rather than deleting it, and repeating a revoke leaves the first revocation time alone.
 - An API key carries its own organization. Scope machine reads and writes by the key organization, never by a session.
 - Leads start as `new`, and only a session moves them, through `PATCH /api/v1/leads/:id/status`. Never open that route to an API key, because agents must not advance a lead. `status` stays a read-only lead field so no values write can move it.
+- Archiving is not a status. `Lead.isArchived` is its own column, moved by `PATCH /api/v1/leads/:id/archive`, and it never touches `status`, so a restored lead comes back at the stage it left on. `GET /api/v1/leads` reads the inbox by default and the archive with `archived=true`, never both. That route is session only for the same reason as status.
 
 ## Prisma Rules
 
 - Use camelCase model fields and map existing snake_case database names with `@map` and `@@map`.
 - Create a new migration for schema changes. Never rewrite an applied migration.
+- The `ApiKey` model mirrors the Better Auth API key plugin's schema and is reached through `schema: { apikey: { modelName: 'apiKey' } }`. Its field names belong to the plugin; only the `@map` column names are this repository's. Do not rename a field without changing the plugin schema with it.
+- `P2002` carries no `meta.target` under the pg driver adapter. Name the constraint you expect through `isUniqueConstraintViolation` in `src/core/database/prisma-errors.ts` and let every other error propagate.
 - Regenerate Prisma Client after schema changes.
 - Use explicit safe selections when a model contains sensitive fields.
 - Use `prisma migrate dev` locally and `prisma migrate deploy` in deployments.

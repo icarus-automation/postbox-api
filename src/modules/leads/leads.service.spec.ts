@@ -1,18 +1,17 @@
 import { BadRequestException } from '@nestjs/common';
-import { Test, TestingModule } from '@nestjs/testing';
 import { FieldType } from '@prisma/client';
+import { mock, mockDeep, mockReset } from 'jest-mock-extended';
 
-import { PrismaService } from '../../core/database/prisma.service';
+import type { PrismaService } from '../../core/database/prisma.service';
 import { LeadFieldsService } from './lead-fields.service';
 import { LeadsService } from './leads.service';
 import type { LeadField } from './types/leads.types';
 
-type ScopedLeadQuery = {
-  where: {
-    id: string;
-    organizationId: string;
-  };
-};
+// The service selects a subset of the model, so fixtures are narrower than the
+// row the typed mock expects back.
+type StoredLead = NonNullable<
+  Awaited<ReturnType<PrismaService['lead']['findFirst']>>
+>;
 
 function leadField(
   key: string,
@@ -40,10 +39,10 @@ const fields: LeadField[] = [
     options: ['POS', 'PMS', 'Other'],
   }),
   leadField('source', FieldType.url),
-  leadField('draftOpener', FieldType.long_text),
+  leadField('note', FieldType.long_text),
   leadField('status', FieldType.select, {
     isReadOnly: true,
-    options: ['new', 'contacted', 'qualified', 'archived'],
+    options: ['new', 'contacted', 'qualified'],
   }),
   leadField('receivedAt', FieldType.datetime, { isReadOnly: true }),
   leadField('dealSize', FieldType.number, { isSystem: false }),
@@ -52,41 +51,38 @@ const fields: LeadField[] = [
 const createdAt = new Date('2026-09-13T10:00:00.000Z');
 const updatedAt = new Date('2026-09-13T11:00:00.000Z');
 
-function storedLead(values: { fieldId: string; value: string | number }[]) {
-  return { id: 'lead-a', createdAt, updatedAt, values };
+// The typed mock is declared to return a bare Lead, while the service reads one
+// with its values joined in, so the fixture is cast to the call's real shape.
+function storedLead(
+  values: { fieldId: string; value: string | number }[],
+  isArchived = false,
+): StoredLead {
+  return {
+    id: 'lead-a',
+    isArchived,
+    createdAt,
+    updatedAt,
+    values,
+  } as unknown as StoredLead;
+}
+
+// What the scoping lookup reads before a write: just the id.
+function existingLead(): StoredLead {
+  return { id: 'lead-a' } as StoredLead;
 }
 
 describe('LeadsService', () => {
-  const create = jest.fn();
-  const count = jest.fn();
-  const findMany = jest.fn();
-  const findFirst = jest.fn();
-  const update = jest.fn();
-  const getAllLeadFields = jest.fn<LeadFieldsService['getAllLeadFields']>();
+  const prisma = mockDeep<PrismaService>();
+  const leadFieldsService = mock<LeadFieldsService>();
+  const service = new LeadsService(prisma, leadFieldsService);
 
-  let service: LeadsService;
+  const { create, count, findMany, findFirst, update } = prisma.lead;
+  const getAllLeadFields = leadFieldsService.getAllLeadFields;
 
-  beforeEach(async () => {
-    create.mockReset();
-    count.mockReset();
-    findMany.mockReset();
-    findFirst.mockReset();
-    update.mockReset();
-    getAllLeadFields.mockReset();
+  beforeEach(() => {
+    mockReset(prisma);
+    mockReset(leadFieldsService);
     getAllLeadFields.mockResolvedValue(fields);
-
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        LeadsService,
-        {
-          provide: PrismaService,
-          useValue: { lead: { create, count, findMany, findFirst, update } },
-        },
-        { provide: LeadFieldsService, useValue: { getAllLeadFields } },
-      ],
-    }).compile();
-
-    service = module.get(LeadsService);
   });
 
   it('stores the given values and the initial status under the calling organization', async () => {
@@ -143,11 +139,12 @@ describe('LeadsService', () => {
           candidate: 'Dana Reyes',
           product: null,
           source: null,
-          draftOpener: null,
+          note: null,
           status: 'contacted',
           receivedAt: '2026-09-13T10:00:00.000Z',
           dealSize: null,
         },
+        isArchived: false,
         createdAt,
         updatedAt,
       },
@@ -161,15 +158,34 @@ describe('LeadsService', () => {
     const result = await service.getAllLeads('organization-a', {
       page: 2,
       limit: 2,
+      archived: false,
     });
 
     expect(result.data.map((lead) => lead.id)).toEqual(['lead-a']);
     expect(result.meta).toEqual({ total: 3, page: 2, limit: 2, lastPage: 2 });
     expect(findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { organizationId: 'organization-a' },
+        where: { organizationId: 'organization-a', isArchived: false },
         skip: 2,
         take: 2,
+      }),
+    );
+  });
+
+  it('lists the archive on its own, never mixed into the inbox', async () => {
+    count.mockResolvedValue(1);
+    findMany.mockResolvedValue([storedLead([], true)]);
+
+    const result = await service.getAllLeads('organization-a', {
+      page: 1,
+      limit: 10,
+      archived: true,
+    });
+
+    expect(result.data[0].isArchived).toBe(true);
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { organizationId: 'organization-a', isArchived: true },
       }),
     );
   });
@@ -181,6 +197,7 @@ describe('LeadsService', () => {
     await service.getAllLeads('organization-a', {
       page: 1,
       limit: 10,
+      archived: false,
       status: 'contacted',
       field: 'source',
       value: 'https://example.com/groups/indie/posts/1',
@@ -188,6 +205,7 @@ describe('LeadsService', () => {
 
     const where = {
       organizationId: 'organization-a',
+      isArchived: false,
       AND: [
         {
           values: {
@@ -215,6 +233,7 @@ describe('LeadsService', () => {
     await service.getAllLeads('organization-a', {
       page: 1,
       limit: 10,
+      archived: false,
       field: 'dealSize',
       value: '1200',
     });
@@ -223,6 +242,7 @@ describe('LeadsService', () => {
       expect.objectContaining({
         where: {
           organizationId: 'organization-a',
+          isArchived: false,
           AND: [
             {
               values: {
@@ -240,6 +260,7 @@ describe('LeadsService', () => {
       service.getAllLeads('organization-a', {
         page: 1,
         limit: 10,
+        archived: false,
         field: 'externalId',
         value: 'fb-123',
       }),
@@ -248,28 +269,38 @@ describe('LeadsService', () => {
   });
 
   it('cannot get a lead through another organization', async () => {
-    findFirst.mockImplementation(({ where }: ScopedLeadQuery) =>
-      Promise.resolve(
-        where.id === 'lead-a' && where.organizationId === 'organization-a'
-          ? storedLead([])
-          : null,
-      ),
-    );
-
+    findFirst.mockResolvedValueOnce(storedLead([]));
     await expect(
       service.getLead('organization-a', 'lead-a'),
     ).resolves.toEqual(expect.objectContaining({ id: 'lead-a' }));
+
+    findFirst.mockResolvedValueOnce(null);
     await expect(
       service.getLead('organization-b', 'lead-a'),
     ).resolves.toBeNull();
+
+    // Every read carries the organization, so a lead in another one is simply
+    // not there rather than hidden after the fact.
+    expect(findFirst).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        where: { id: 'lead-a', organizationId: 'organization-a' },
+      }),
+    );
+    expect(findFirst).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        where: { id: 'lead-a', organizationId: 'organization-b' },
+      }),
+    );
   });
 
   it('upserts the given values and deletes the cleared ones', async () => {
-    findFirst.mockResolvedValue({ id: 'lead-a' });
+    findFirst.mockResolvedValue(existingLead());
     update.mockResolvedValue(storedLead([]));
 
     await service.updateLeadValues('organization-a', 'lead-a', {
-      values: { candidate: 'Dana R.', draftOpener: null },
+      values: { candidate: 'Dana R.', note: null },
     });
 
     expect(findFirst).toHaveBeenCalledWith(
@@ -295,7 +326,7 @@ describe('LeadsService', () => {
                 update: { value: 'Dana R.' },
               },
             ],
-            deleteMany: { fieldId: { in: ['field-draftOpener'] } },
+            deleteMany: { fieldId: { in: ['field-note'] } },
           },
         },
       }),
@@ -303,7 +334,7 @@ describe('LeadsService', () => {
   });
 
   it('never lets a values update change the status', async () => {
-    findFirst.mockResolvedValue({ id: 'lead-a' });
+    findFirst.mockResolvedValue(existingLead());
 
     await expect(
       service.updateLeadValues('organization-a', 'lead-a', {
@@ -314,7 +345,7 @@ describe('LeadsService', () => {
   });
 
   it('moves a lead in the active organization to the requested status', async () => {
-    findFirst.mockResolvedValue({ id: 'lead-a' });
+    findFirst.mockResolvedValue(existingLead());
     update.mockResolvedValue(
       storedLead([{ fieldId: 'field-status', value: 'qualified' }]),
     );
@@ -347,11 +378,52 @@ describe('LeadsService', () => {
     );
   });
 
+  it('archives a lead without touching the status it reached', async () => {
+    findFirst.mockResolvedValue(existingLead());
+    update.mockResolvedValue(
+      storedLead([{ fieldId: 'field-status', value: 'contacted' }], true),
+    );
+
+    const lead = await service.setLeadArchived(
+      'organization-a',
+      'lead-a',
+      true,
+    );
+
+    expect(lead?.isArchived).toBe(true);
+    expect(lead?.values.status).toBe('contacted');
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'lead-a' },
+        data: { isArchived: true },
+      }),
+    );
+  });
+
+  it('restores a lead out of the archive', async () => {
+    findFirst.mockResolvedValue(existingLead());
+    update.mockResolvedValue(storedLead([]));
+
+    const lead = await service.setLeadArchived(
+      'organization-a',
+      'lead-a',
+      false,
+    );
+
+    expect(lead?.isArchived).toBe(false);
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { isArchived: false } }),
+    );
+  });
+
   it('cannot change a lead through another organization', async () => {
     findFirst.mockResolvedValue(null);
 
     await expect(
-      service.setLeadStatus('organization-b', 'lead-a', 'archived'),
+      service.setLeadStatus('organization-b', 'lead-a', 'qualified'),
+    ).resolves.toBeNull();
+    await expect(
+      service.setLeadArchived('organization-b', 'lead-a', true),
     ).resolves.toBeNull();
     await expect(
       service.updateLeadValues('organization-b', 'lead-a', {

@@ -1,4 +1,5 @@
-import { FieldCollection, FieldType } from '@prisma/client';
+import { FieldCollection, FieldType, type Prisma } from '@prisma/client';
+import { mockDeep } from 'jest-mock-extended';
 
 import type { PrismaService } from '../../core/database/prisma.service';
 import {
@@ -6,31 +7,20 @@ import {
   provisionLeadSystemFields,
 } from './lead-system-fields';
 
-type ProvisionedField = {
-  organizationId: string;
-  collection: FieldCollection;
-  key: string;
-  type: FieldType;
-  options?: string[];
-  isRequired?: boolean;
-  isReadOnly?: boolean;
-  isSystem: boolean;
-  position: number;
-};
+type ProvisionedField = Prisma.FieldDefinitionCreateManyInput;
 
 describe('provisionLeadSystemFields', () => {
-  const createMany = jest.fn();
-  const db = { fieldDefinition: { createMany } } as unknown as PrismaService;
+  const prisma = mockDeep<PrismaService>();
 
   let provisioned: ProvisionedField[];
 
   beforeAll(async () => {
-    createMany.mockImplementation(({ data }: { data: ProvisionedField[] }) => {
-      provisioned = data;
-      return Promise.resolve({ count: data.length });
-    });
+    prisma.fieldDefinition.createMany.mockResolvedValue({ count: 0 });
 
-    await provisionLeadSystemFields(db, 'organization-a');
+    await provisionLeadSystemFields(prisma, 'organization-a');
+
+    const [args] = prisma.fieldDefinition.createMany.mock.calls[0];
+    provisioned = Array.isArray(args?.data) ? args.data : [];
   });
 
   it('gives the organization the lead system fields in order', () => {
@@ -40,12 +30,11 @@ describe('provisionLeadSystemFields', () => {
       'source',
       'signal',
       'whyLead',
-      'draftOpener',
       'status',
       'receivedAt',
     ]);
     expect(provisioned.map((field) => field.position)).toEqual([
-      0, 1, 2, 3, 4, 5, 6, 7,
+      0, 1, 2, 3, 4, 5, 6,
     ]);
     for (const field of provisioned) {
       expect(field).toEqual(
@@ -56,6 +45,18 @@ describe('provisionLeadSystemFields', () => {
         }),
       );
     }
+  });
+
+  it('labels the fields the way a person reads them', () => {
+    expect(provisioned.map((field) => field.label)).toEqual([
+      'Contact',
+      'Product',
+      'Source',
+      'What they said',
+      'Why this is a lead',
+      'Status',
+      'Received',
+    ]);
   });
 
   it('makes product a select field', () => {

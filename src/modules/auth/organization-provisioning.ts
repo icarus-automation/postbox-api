@@ -1,16 +1,23 @@
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 
 import type { PrismaService } from '../../core/database/prisma.service';
-import { provisionLeadSystemFields } from '../leads/lead-system-fields';
+import type { Auth } from './auth';
 
 const SLUG_MAX_LENGTH = 40;
 const FALLBACK_SLUG = 'organization';
+// Enough to survive a lost race: availableSlug re-reads the table each time, so
+// every attempt after the first already carries a suffix.
+const SLUG_ATTEMPTS = 3;
+const SLUG_TAKEN_CODE = 'ORGANIZATION_ALREADY_EXISTS';
 
 type ProvisionedUser = {
   id: string;
   name: string;
   email: string;
 };
+
+// Type-only, so reaching back into auth.ts costs no runtime cycle.
+type AuthApi = Auth['api'];
 
 function toSlug(value: string): string {
   return value
@@ -34,45 +41,58 @@ async function availableSlug(db: PrismaService, base: string): Promise<string> {
   return taken ? `${slug}-${randomBytes(3).toString('hex')}` : slug;
 }
 
+function isSlugTaken(error: unknown): boolean {
+  const body = (error as { body?: { code?: string } } | null)?.body;
+
+  return body?.code === SLUG_TAKEN_CODE;
+}
+
+async function createOrganization(
+  api: AuthApi,
+  db: PrismaService,
+  name: string,
+  base: string,
+  userId: string,
+): Promise<string> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      const organization = await api.createOrganization({
+        body: { name, slug: await availableSlug(db, base), userId },
+      });
+
+      return organization.id;
+    } catch (error) {
+      if (attempt >= SLUG_ATTEMPTS || !isSlugTaken(error)) throw error;
+    }
+  }
+}
+
 // Every user owns exactly one organization, created alongside their account, so
 // no client has to run an organization setup step before it can use the API.
+// Better Auth creates it, which runs the organization hooks that seed the lead
+// system fields and hold every user to a single membership.
 export async function provisionPersonalOrganization(
+  api: AuthApi,
   db: PrismaService,
   user: ProvisionedUser,
 ): Promise<string> {
   const label = organizationLabel(user);
-  const createdAt = new Date();
-
-  const organization = await db.organization.create({
-    data: {
-      id: randomUUID(),
-      name: `${label}'s organization`,
-      slug: await availableSlug(db, toSlug(label)),
-      createdAt,
-    },
-    select: { id: true },
-  });
-
-  await db.member.create({
-    data: {
-      id: randomUUID(),
-      organizationId: organization.id,
-      userId: user.id,
-      role: 'owner',
-      createdAt,
-    },
-  });
-
-  await provisionLeadSystemFields(db, organization.id);
+  const organizationId = await createOrganization(
+    api,
+    db,
+    `${label}'s organization`,
+    toSlug(label),
+    user.id,
+  );
 
   // Sign-up commits its session before this hook runs, so the session the new
   // account already holds needs the organization backfilled.
   await db.session.updateMany({
     where: { userId: user.id, activeOrganizationId: null },
-    data: { activeOrganizationId: organization.id },
+    data: { activeOrganizationId: organizationId },
   });
 
-  return organization.id;
+  return organizationId;
 }
 
 export async function getUserOrganizationId(

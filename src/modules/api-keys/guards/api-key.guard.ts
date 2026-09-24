@@ -4,15 +4,17 @@ import {
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
+import { AuthService } from '@thallesp/nestjs-better-auth';
 
-import { ApiKeysService } from '../api-keys.service';
+import { ORGANIZATION_API_KEY_CONFIG_ID } from '../../auth/api-key-config';
+import type { Auth } from '../../auth/auth';
 import type { ApiKeyRequest } from '../types/api-keys.types';
 
 export const API_KEY_HEADER = 'x-api-key';
 
 @Injectable()
 export class ApiKeyGuard implements CanActivate {
-  constructor(private readonly apiKeysService: ApiKeysService) {}
+  constructor(private readonly authService: AuthService<Auth>) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<ApiKeyRequest>();
@@ -21,11 +23,17 @@ export class ApiKeyGuard implements CanActivate {
 
     if (!key) throw new UnauthorizedException('Missing API key');
 
-    const apiKey = await this.apiKeysService.authenticateApiKey(key);
+    // Better Auth answers with valid: false for an unknown, disabled or expired
+    // key, and bumps the key's last request on the way through. Pinning the
+    // configuration keeps this to organization-owned keys, so referenceId below
+    // is always an organization.
+    const { valid, key: verified } = await this.authService.api.verifyApiKey({
+      body: { key, configId: ORGANIZATION_API_KEY_CONFIG_ID },
+    });
 
-    if (!apiKey) throw new UnauthorizedException('Invalid API key');
+    if (!valid || !verified) throw new UnauthorizedException('Invalid API key');
 
-    request.apiKey = apiKey;
+    request.apiKey = { id: verified.id, organizationId: verified.referenceId };
 
     return true;
   }

@@ -1,103 +1,86 @@
-import { createHash, randomBytes } from 'node:crypto';
-
 import { Injectable } from '@nestjs/common';
-import type { Prisma } from '@prisma/client';
+import { AuthService } from '@thallesp/nestjs-better-auth';
 
-import { PrismaService } from '../../core/database/prisma.service';
+import type { Auth } from '../auth/auth';
 import type { CreateApiKeyDTO } from './dto/create-api-key.dto';
 import type {
-  ApiKeyPrincipal,
   ApiKeySummary,
   CreatedApiKey,
+  StoredApiKey,
 } from './types/api-keys.types';
 
-const KEY_LABEL = 'cms';
-const KEY_ENTROPY_BYTES = 32;
-const KEY_PREFIX_LENGTH = 12;
-
-const API_KEY_SELECT = {
-  id: true,
-  name: true,
-  keyPrefix: true,
-  lastUsedAt: true,
-  revokedAt: true,
-  createdAt: true,
-} satisfies Prisma.ApiKeySelect;
-
-function generateApiKey(): string {
-  return `${KEY_LABEL}_${randomBytes(KEY_ENTROPY_BYTES).toString('base64url')}`;
+// Better Auth disables a key rather than deleting it, and stamps updatedAt when
+// it does, so a disabled key's updatedAt is when it was revoked.
+function toApiKeySummary(apiKey: StoredApiKey): ApiKeySummary {
+  return {
+    id: apiKey.id,
+    name: apiKey.name,
+    keyPrefix: apiKey.start,
+    lastUsedAt: apiKey.lastRequest,
+    revokedAt: apiKey.enabled ? null : apiKey.updatedAt,
+    createdAt: apiKey.createdAt,
+  };
 }
 
-// Keys carry 256 bits of entropy, so an unsalted digest stores them unreadably
-// while still allowing a single indexed lookup on authentication.
-function hashApiKey(key: string): string {
-  return createHash('sha256').update(key).digest('hex');
-}
-
+// Thin adapter over the Better Auth API key plugin, which owns generation,
+// hashing, storage, verification and usage tracking. Nothing here touches the
+// table directly.
 @Injectable()
 export class ApiKeysService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly authService: AuthService<Auth>) {}
 
   async createApiKey(
     organizationId: string,
     createdById: string,
     body: CreateApiKeyDTO,
   ): Promise<CreatedApiKey> {
-    const key = generateApiKey();
-
-    const apiKey = await this.prisma.apiKey.create({
-      data: {
+    // No headers, so the plugin treats this as a server call and reads the
+    // acting user from the body. It still checks that user's organization role.
+    const apiKey = await this.authService.api.createApiKey({
+      body: {
         name: body.name,
-        keyPrefix: key.slice(0, KEY_PREFIX_LENGTH),
-        keyHash: hashApiKey(key),
         organizationId,
-        createdById,
+        userId: createdById,
+        metadata: { createdById },
       },
-      select: API_KEY_SELECT,
     });
 
-    return { ...apiKey, key };
+    return { ...toApiKeySummary(apiKey), key: apiKey.key };
   }
 
-  getAllApiKeys(organizationId: string): Promise<ApiKeySummary[]> {
-    return this.prisma.apiKey.findMany({
-      where: { organizationId },
-      select: API_KEY_SELECT,
-      orderBy: { createdAt: 'desc' },
+  async getAllApiKeys(
+    organizationId: string,
+    headers: Headers,
+  ): Promise<ApiKeySummary[]> {
+    const { apiKeys } = await this.authService.api.listApiKeys({
+      headers,
+      query: {
+        organizationId,
+        sortBy: 'createdAt',
+        sortDirection: 'desc',
+      },
     });
+
+    return apiKeys.map(toApiKeySummary);
   }
 
+  // Revoking twice leaves the first revocation time alone.
   async revokeApiKey(
     organizationId: string,
     id: string,
+    revokedById: string,
+    headers: Headers,
   ): Promise<ApiKeySummary | null> {
-    const apiKey = await this.prisma.apiKey.findFirst({
-      where: { id, organizationId },
-      select: API_KEY_SELECT,
+    const apiKeys = await this.getAllApiKeys(organizationId, headers);
+    const apiKey = apiKeys.find((candidate) => candidate.id === id);
+
+    if (!apiKey) return null;
+    if (apiKey.revokedAt) return apiKey;
+
+    const revoked = await this.authService.api.updateApiKey({
+      body: { keyId: id, enabled: false, userId: revokedById },
     });
 
-    if (!apiKey || apiKey.revokedAt) return apiKey;
-
-    return this.prisma.apiKey.update({
-      where: { id: apiKey.id },
-      data: { revokedAt: new Date() },
-      select: API_KEY_SELECT,
-    });
-  }
-
-  async authenticateApiKey(key: string): Promise<ApiKeyPrincipal | null> {
-    const apiKey = await this.prisma.apiKey.findUnique({
-      where: { keyHash: hashApiKey(key) },
-      select: { id: true, organizationId: true, revokedAt: true },
-    });
-
-    if (!apiKey || apiKey.revokedAt) return null;
-
-    await this.prisma.apiKey.update({
-      where: { id: apiKey.id },
-      data: { lastUsedAt: new Date() },
-    });
-
-    return { id: apiKey.id, organizationId: apiKey.organizationId };
+    return toApiKeySummary(revoked);
   }
 }

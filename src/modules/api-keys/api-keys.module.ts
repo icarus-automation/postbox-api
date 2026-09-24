@@ -8,6 +8,6 @@ import { SessionOrApiKeyGuard } from './guards/session-or-api-key.guard';
 @Module({
   controllers: [ApiKeysController],
   providers: [ApiKeysService, ApiKeyGuard, SessionOrApiKeyGuard],
-  exports: [ApiKeysService, ApiKeyGuard, SessionOrApiKeyGuard],
+  exports: [ApiKeyGuard, SessionOrApiKeyGuard],
 })
 export class ApiKeysModule {}

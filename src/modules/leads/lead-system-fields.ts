@@ -2,12 +2,9 @@ import { FieldCollection, FieldType } from '@prisma/client';
 
 import type { PrismaService } from '../../core/database/prisma.service';
 
-export const LEAD_STATUSES = [
-  'new',
-  'contacted',
-  'qualified',
-  'archived',
-] as const;
+// The stages a lead moves through. Archiving is not one of them: it is the
+// lead's own isArchived flag, so an archived lead keeps the stage it reached.
+export const LEAD_STATUSES = ['new', 'contacted', 'qualified'] as const;
 
 export type LeadStatus = (typeof LEAD_STATUSES)[number];
 
@@ -32,7 +29,7 @@ type LeadSystemField = {
 const LEAD_SYSTEM_FIELDS: LeadSystemField[] = [
   {
     key: 'candidate',
-    label: 'Candidate',
+    label: 'Contact',
     type: FieldType.text,
     isRequired: true,
   },
@@ -46,17 +43,16 @@ const LEAD_SYSTEM_FIELDS: LeadSystemField[] = [
   { key: 'source', label: 'Source', type: FieldType.url, isRequired: true },
   {
     key: 'signal',
-    label: 'Signal',
+    label: 'What they said',
     type: FieldType.long_text,
     isRequired: true,
   },
   {
     key: 'whyLead',
-    label: 'Why lead',
+    label: 'Why this is a lead',
     type: FieldType.long_text,
     isRequired: true,
   },
-  { key: 'draftOpener', label: 'Draft opener', type: FieldType.long_text },
   {
     key: LEAD_STATUS_KEY,
     label: 'Status',

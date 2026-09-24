@@ -1,3 +1,4 @@
+import { apiKey } from '@better-auth/api-key';
 import { prismaAdapter } from '@better-auth/prisma-adapter';
 import * as bcrypt from 'bcrypt';
 import { APIError } from 'better-auth/api';
@@ -9,9 +10,15 @@ import { env } from '../../core/config/env.config';
 import { prisma } from '../../core/database/prisma.service';
 import { provisionLeadSystemFields } from '../leads/lead-system-fields';
 import {
-  getUserOrganizationId,
-  provisionPersonalOrganization,
-} from './organization-provisioning';
+  API_KEY_NAME_MAX_LENGTH,
+  API_KEY_PREFIX,
+  API_KEY_START_LENGTH,
+} from './api-key-config';
+import {
+  organizationAccessControl,
+  organizationRoles,
+} from './organization-access';
+import { getUserOrganizationId } from './organization-provisioning';
 
 const SINGLE_ORGANIZATION_MESSAGE = 'Users can belong to only one organization';
 
@@ -66,14 +73,8 @@ export const auth = betterAuth({
       joins: true,
     },
   },
+  // OrganizationProvisioningHook adds the user create hook here at module init.
   databaseHooks: {
-    user: {
-      create: {
-        after: async (user) => {
-          await provisionPersonalOrganization(prisma, user);
-        },
-      },
-    },
     session: {
       create: {
         before: async (session) => {
@@ -92,9 +93,11 @@ export const auth = betterAuth({
   plugins: [
     organization({
       organizationLimit: 1,
+      ac: organizationAccessControl,
+      roles: organizationRoles,
       organizationHooks: {
-        // Sign-up provisioning seeds these itself. This covers an organization
-        // created through the organization API, such as after deleting one.
+        // The one path that seeds lead system fields, for sign-up provisioning
+        // and for an organization created through the organization API alike.
         afterCreateOrganization: async ({ organization }) => {
           await provisionLeadSystemFields(prisma, organization.id);
         },
@@ -115,6 +118,22 @@ export const auth = betterAuth({
           await ensureUserHasNoOrganization(user.id);
         },
       },
+    }),
+    apiKey({
+      references: 'organization',
+      defaultPrefix: API_KEY_PREFIX,
+      requireName: true,
+      maximumNameLength: API_KEY_NAME_MAX_LENGTH,
+      startingCharactersConfig: {
+        shouldStore: true,
+        charactersLength: API_KEY_START_LENGTH,
+      },
+      // Carries the creator, which the table used to hold in its own column.
+      enableMetadata: true,
+      // Nest throttling already covers these routes, and turning the plugin's
+      // own limiter on would change what machine callers are allowed to send.
+      rateLimit: { enabled: false },
+      schema: { apikey: { modelName: 'apiKey' } },
     }),
   ],
 });

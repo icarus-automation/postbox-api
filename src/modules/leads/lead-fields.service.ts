@@ -5,6 +5,10 @@ import {
 } from '@nestjs/common';
 import { FieldCollection, FieldType, type Prisma } from '@prisma/client';
 
+import {
+  isUniqueConstraintViolation,
+  type UniqueConstraint,
+} from '../../core/database/prisma-errors';
 import { PrismaService } from '../../core/database/prisma.service';
 import type { CreateLeadFieldDTO } from './dto/create-lead-field.dto';
 import type { UpdateLeadFieldDTO } from './dto/update-lead-field.dto';
@@ -24,6 +28,13 @@ const LEAD_FIELD_SELECT = {
 
 const OPTIONS_ON_NON_SELECT_MESSAGE =
   'options are only allowed on select fields';
+
+// One key per collection per organization. The database settles it, so two
+// requests racing on the same key cannot both win.
+const LEAD_FIELD_KEY_CONSTRAINT: UniqueConstraint = {
+  index: 'field_definitions_organization_id_collection_key_key',
+  fields: ['organization_id', 'collection', 'key'],
+};
 
 @Injectable()
 export class LeadFieldsService {
@@ -49,34 +60,31 @@ export class LeadFieldsService {
     }
 
     const scope = { organizationId, collection: FieldCollection.lead };
-    const [existing, last] = await Promise.all([
-      this.prisma.fieldDefinition.findFirst({
-        where: { ...scope, key: body.key },
-        select: { id: true },
-      }),
-      this.prisma.fieldDefinition.findFirst({
-        where: scope,
-        select: { position: true },
-        orderBy: { position: 'desc' },
-      }),
-    ]);
-
-    if (existing) {
-      throw new ConflictException(`Lead field ${body.key} already exists`);
-    }
-
-    return this.prisma.fieldDefinition.create({
-      data: {
-        ...scope,
-        key: body.key,
-        label: body.label,
-        type: body.type,
-        options: body.options ?? [],
-        isRequired: body.isRequired ?? false,
-        position: (last?.position ?? -1) + 1,
-      },
-      select: LEAD_FIELD_SELECT,
+    const last = await this.prisma.fieldDefinition.findFirst({
+      where: scope,
+      select: { position: true },
+      orderBy: { position: 'desc' },
     });
+
+    try {
+      return await this.prisma.fieldDefinition.create({
+        data: {
+          ...scope,
+          key: body.key,
+          label: body.label,
+          type: body.type,
+          options: body.options ?? [],
+          isRequired: body.isRequired ?? false,
+          position: (last?.position ?? -1) + 1,
+        },
+        select: LEAD_FIELD_SELECT,
+      });
+    } catch (error) {
+      if (isUniqueConstraintViolation(error, LEAD_FIELD_KEY_CONSTRAINT)) {
+        throw new ConflictException(`Lead field ${body.key} already exists`);
+      }
+      throw error;
+    }
   }
 
   // A required flag or options change only affects later writes. Leads keep the

@@ -25,6 +25,22 @@ describe('FilterLeadsDTO', () => {
     );
   });
 
+  it('reads the two words a query string can carry for archived', async () => {
+    const inbox = plainToInstance(FilterLeadsDTO, {});
+    const archive = plainToInstance(FilterLeadsDTO, { archived: 'true' });
+    const back = plainToInstance(FilterLeadsDTO, { archived: 'false' });
+
+    expect(inbox.archived).toBe(false);
+    expect(archive.archived).toBe(true);
+    expect(back.archived).toBe(false);
+    await expect(errorsFor({ archived: 'true' })).resolves.toEqual([]);
+  });
+
+  it('refuses anything else for archived rather than reading it as false', async () => {
+    await expect(errorsFor({ archived: 'yes' })).resolves.toEqual(['archived']);
+    await expect(errorsFor({ archived: '1' })).resolves.toEqual(['archived']);
+  });
+
   it('refuses an empty or repeated lookup value', async () => {
     await expect(errorsFor({ field: 'source', value: '' })).resolves.toEqual([
       'value',

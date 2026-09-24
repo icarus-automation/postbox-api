@@ -24,6 +24,7 @@ import type { ApiKeyPrincipal } from '../api-keys/types/api-keys.types';
 import type { OrganizationSession } from '../auth/types/auth.types';
 import { CreateLeadDTO } from './dto/create-lead.dto';
 import { FilterLeadsDTO } from './dto/filter-leads.dto';
+import { SetLeadArchivedDTO } from './dto/set-lead-archived.dto';
 import { SetLeadStatusDTO } from './dto/set-lead-status.dto';
 import { UpdateLeadValuesDTO } from './dto/update-lead-values.dto';
 import { LeadsService } from './leads.service';
@@ -95,6 +96,23 @@ export class LeadsController {
       session.session.activeOrganizationId,
       id,
       body.status,
+    );
+    if (!lead) throw new NotFoundException('Lead not found');
+    return lead;
+  }
+
+  // Session only, for the same reason as status: an agent files leads, a person
+  // decides which ones leave the inbox.
+  @Patch(':id/archive')
+  async setLeadArchived(
+    @Param('id') id: string,
+    @Body() body: SetLeadArchivedDTO,
+    @Session() session: OrganizationSession,
+  ): Promise<OrganizationLead> {
+    const lead = await this.leadsService.setLeadArchived(
+      session.session.activeOrganizationId,
+      id,
+      body.isArchived,
     );
     if (!lead) throw new NotFoundException('Lead not found');
     return lead;

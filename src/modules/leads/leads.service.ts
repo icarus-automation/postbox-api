@@ -26,6 +26,7 @@ import type {
 
 const LEAD_SELECT = {
   id: true,
+  isArchived: true,
   createdAt: true,
   updatedAt: true,
   values: { select: { fieldId: true, value: true } },
@@ -66,6 +67,7 @@ function toOrganizationLead(
   return {
     id: lead.id,
     values,
+    isArchived: lead.isArchived,
     createdAt: lead.createdAt,
     updatedAt: lead.updatedAt,
   };
@@ -125,7 +127,12 @@ export class LeadsService {
       });
     }
 
-    const where: Prisma.LeadWhereInput = { organizationId };
+    // The archive is a separate view, so a list is either the inbox or the
+    // archive and never both.
+    const where: Prisma.LeadWhereInput = {
+      organizationId,
+      isArchived: query.archived,
+    };
     if (matches.length > 0) {
       where.AND = matches.map((match) => ({ values: { some: match } }));
     }
@@ -184,8 +191,7 @@ export class LeadsService {
     return this.writeLeadValues(fields, lead.id, changes);
   }
 
-  // Any status can follow any other, so a person can undo a misclick or bring a
-  // lead back out of the archive.
+  // Any status can follow any other, so a person can undo a misclick.
   async setLeadStatus(
     organizationId: string,
     id: string,
@@ -202,6 +208,29 @@ export class LeadsService {
       set: [{ field: getSystemField(fields, LEAD_STATUS_KEY), value: status }],
       clear: [],
     });
+  }
+
+  // Archiving takes a lead out of the inbox and restoring puts it back. Neither
+  // touches the status, so a lead comes back at the stage it left on.
+  async setLeadArchived(
+    organizationId: string,
+    id: string,
+    isArchived: boolean,
+  ): Promise<OrganizationLead | null> {
+    const [fields, lead] = await Promise.all([
+      this.leadFieldsService.getAllLeadFields(organizationId),
+      this.findLeadId(organizationId, id),
+    ]);
+
+    if (!lead) return null;
+
+    const archived = await this.prisma.lead.update({
+      where: { id: lead.id },
+      data: { isArchived },
+      select: LEAD_SELECT,
+    });
+
+    return toOrganizationLead(fields, archived);
   }
 
   private findLeadId(

@@ -1,6 +1,7 @@
 import { INestApplication, VersioningType } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { FieldType } from '@prisma/client';
+import { AuthService } from '@thallesp/nestjs-better-auth';
 import request from 'supertest';
 import { App } from 'supertest/types';
 
@@ -11,7 +12,7 @@ const leadFields = [
   {
     id: 'field-candidate',
     key: 'candidate',
-    label: 'Candidate',
+    label: 'Contact',
     type: FieldType.text,
     options: [],
     isRequired: true,
@@ -24,7 +25,7 @@ const leadFields = [
     key: 'status',
     label: 'Status',
     type: FieldType.select,
-    options: ['new', 'contacted', 'qualified', 'archived'],
+    options: ['new', 'contacted', 'qualified'],
     isRequired: false,
     isReadOnly: true,
     isSystem: true,
@@ -32,9 +33,11 @@ const leadFields = [
   },
 ];
 
+// Better Auth owns key verification now, and it reads through its own Prisma
+// client rather than the injected one, so the key seam for these tests is the
+// verify call itself.
 describe('Application authentication (e2e)', () => {
-  const apiKeyFindUnique = jest.fn();
-  const apiKeyUpdate = jest.fn();
+  const verifyApiKey = jest.fn();
   const fieldDefinitionFindMany = jest.fn();
   const leadCreate = jest.fn();
   const leadCount = jest.fn();
@@ -49,7 +52,6 @@ describe('Application authentication (e2e)', () => {
     })
       .overrideProvider(PrismaService)
       .useValue({
-        apiKey: { findUnique: apiKeyFindUnique, update: apiKeyUpdate },
         fieldDefinition: { findMany: fieldDefinitionFindMany },
         lead: {
           create: leadCreate,
@@ -58,6 +60,8 @@ describe('Application authentication (e2e)', () => {
           findFirst: leadFindFirst,
         },
       })
+      .overrideProvider(AuthService)
+      .useValue({ api: { verifyApiKey } })
       .compile();
 
     app = moduleFixture.createNestApplication({
@@ -72,10 +76,12 @@ describe('Application authentication (e2e)', () => {
   });
 
   beforeEach(() => {
-    apiKeyFindUnique.mockReset();
-    apiKeyFindUnique.mockResolvedValue(null);
-    apiKeyUpdate.mockReset();
-    apiKeyUpdate.mockResolvedValue({});
+    verifyApiKey.mockReset();
+    verifyApiKey.mockResolvedValue({
+      valid: false,
+      error: { code: 'INVALID_API_KEY' },
+      key: null,
+    });
     fieldDefinitionFindMany.mockReset();
     fieldDefinitionFindMany.mockResolvedValue(leadFields);
     leadCreate.mockReset();
@@ -87,10 +93,10 @@ describe('Application authentication (e2e)', () => {
   });
 
   function acceptApiKey(): void {
-    apiKeyFindUnique.mockResolvedValue({
-      id: 'key-a',
-      organizationId: 'organization-a',
-      revokedAt: null,
+    verifyApiKey.mockResolvedValue({
+      valid: true,
+      error: null,
+      key: { id: 'key-a', referenceId: 'organization-a' },
     });
   }
 
@@ -102,14 +108,19 @@ describe('Application authentication (e2e)', () => {
   });
 
   it('rejects unauthenticated protected routes', async () => {
-    await request(app.getHttpServer()).get('/api/v1/users').expect(401);
+    await request(app.getHttpServer()).get('/api/v1/api-keys').expect(401);
+  });
+
+  it('no longer serves the retired users routes', async () => {
+    await request(app.getHttpServer()).get('/api/v1/users').expect(404);
+    await request(app.getHttpServer()).get('/api/v1/users/user-a').expect(404);
   });
 
   it('rejects lead reads without a session or an API key', async () => {
     await request(app.getHttpServer()).get('/api/v1/leads').expect(401);
     await request(app.getHttpServer()).get('/api/v1/leads/lead-a').expect(401);
 
-    expect(apiKeyFindUnique).not.toHaveBeenCalled();
+    expect(verifyApiKey).not.toHaveBeenCalled();
   });
 
   it('lets an API key read leads in its own organization', async () => {
@@ -136,7 +147,9 @@ describe('Application authentication (e2e)', () => {
       .expect(200);
 
     expect(leadFindMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { organizationId: 'organization-a' } }),
+      expect.objectContaining({
+        where: { organizationId: 'organization-a', isArchived: false },
+      }),
     );
     expect(leadFindFirst).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -158,6 +171,7 @@ describe('Application authentication (e2e)', () => {
       expect.objectContaining({
         where: {
           organizationId: 'organization-a',
+          isArchived: false,
           AND: [
             {
               values: {
@@ -202,7 +216,7 @@ describe('Application authentication (e2e)', () => {
       .send({ values: { candidate: 'Dana Reyes' } })
       .expect(401);
 
-    expect(apiKeyFindUnique).not.toHaveBeenCalled();
+    expect(verifyApiKey).not.toHaveBeenCalled();
   });
 
   it('rejects lead ingest with an unknown API key', async () => {
@@ -212,7 +226,7 @@ describe('Application authentication (e2e)', () => {
       .send({ values: { candidate: 'Dana Reyes' } })
       .expect(401);
 
-    expect(apiKeyFindUnique).toHaveBeenCalled();
+    expect(verifyApiKey).toHaveBeenCalled();
   });
 
   it('refuses lead ingest with keys that are not lead fields', async () => {
@@ -270,7 +284,7 @@ describe('Application authentication (e2e)', () => {
     expect((response.body as { message: string }).message).toBe(
       'Unauthorized',
     );
-    expect(apiKeyFindUnique).not.toHaveBeenCalled();
+    expect(verifyApiKey).not.toHaveBeenCalled();
   });
 
   it('serves lead fields to an API key, not to the lead detail route', async () => {
@@ -302,7 +316,7 @@ describe('Application authentication (e2e)', () => {
       .set('x-api-key', 'cms_valid')
       .expect(401);
 
-    expect(apiKeyFindUnique).not.toHaveBeenCalled();
+    expect(verifyApiKey).not.toHaveBeenCalled();
   });
 
   it('never lets an API key edit lead values', async () => {
@@ -311,10 +325,10 @@ describe('Application authentication (e2e)', () => {
     await request(app.getHttpServer())
       .patch('/api/v1/leads/lead-a')
       .set('x-api-key', 'cms_valid')
-      .send({ values: { draftOpener: 'Hi' } })
+      .send({ values: { note: 'Hi' } })
       .expect(401);
 
-    expect(apiKeyFindUnique).not.toHaveBeenCalled();
+    expect(verifyApiKey).not.toHaveBeenCalled();
   });
 
   it('rejects lead status changes without a session', async () => {
@@ -331,7 +345,47 @@ describe('Application authentication (e2e)', () => {
       .send({ status: 'contacted' })
       .expect(401);
 
-    expect(apiKeyFindUnique).not.toHaveBeenCalled();
+    expect(verifyApiKey).not.toHaveBeenCalled();
+  });
+
+  it('never lets an API key archive a lead', async () => {
+    await request(app.getHttpServer())
+      .patch('/api/v1/leads/lead-a/archive')
+      .send({ isArchived: true })
+      .expect(401);
+    await request(app.getHttpServer())
+      .patch('/api/v1/leads/lead-a/archive')
+      .set('x-api-key', 'cms_unknown')
+      .send({ isArchived: true })
+      .expect(401);
+
+    expect(verifyApiKey).not.toHaveBeenCalled();
+  });
+
+  it('reads the archive as its own list, never mixed into the inbox', async () => {
+    acceptApiKey();
+
+    await request(app.getHttpServer())
+      .get('/api/v1/leads')
+      .query({ archived: 'true' })
+      .set('x-api-key', 'cms_valid')
+      .expect(200);
+
+    expect(leadFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { organizationId: 'organization-a', isArchived: true },
+      }),
+    );
+  });
+
+  it('refuses an archived filter that is not true or false', async () => {
+    acceptApiKey();
+
+    await request(app.getHttpServer())
+      .get('/api/v1/leads')
+      .query({ archived: 'yes' })
+      .set('x-api-key', 'cms_valid')
+      .expect(400);
   });
 
   afterAll(async () => {

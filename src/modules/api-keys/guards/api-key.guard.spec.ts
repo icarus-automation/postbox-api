@@ -1,7 +1,9 @@
 import { ExecutionContext, UnauthorizedException } from '@nestjs/common';
-import { Test, TestingModule } from '@nestjs/testing';
+import type { AuthService } from '@thallesp/nestjs-better-auth';
+import { mock } from 'jest-mock-extended';
 
-import { ApiKeysService } from '../api-keys.service';
+import { ORGANIZATION_API_KEY_CONFIG_ID } from '../../auth/api-key-config';
+import type { Auth } from '../../auth/auth';
 import type { ApiKeyRequest } from '../types/api-keys.types';
 import { ApiKeyGuard } from './api-key.guard';
 
@@ -18,21 +20,15 @@ function contextFor(headers: Record<string, string>): {
 }
 
 describe('ApiKeyGuard', () => {
-  const authenticateApiKey = jest.fn<ApiKeysService['authenticateApiKey']>();
+  const verifyApiKey = jest.fn();
+  const authService = mock<AuthService<Auth>>({
+    api: { verifyApiKey } as unknown as Auth['api'],
+  });
 
-  let guard: ApiKeyGuard;
+  const guard = new ApiKeyGuard(authService);
 
-  beforeEach(async () => {
-    authenticateApiKey.mockReset();
-
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        ApiKeyGuard,
-        { provide: ApiKeysService, useValue: { authenticateApiKey } },
-      ],
-    }).compile();
-
-    guard = module.get(ApiKeyGuard);
+  beforeEach(() => {
+    verifyApiKey.mockReset();
   });
 
   it('rejects a request without an API key header', async () => {
@@ -41,12 +37,16 @@ describe('ApiKeyGuard', () => {
     await expect(guard.canActivate(context)).rejects.toBeInstanceOf(
       UnauthorizedException,
     );
-    expect(authenticateApiKey).not.toHaveBeenCalled();
+    expect(verifyApiKey).not.toHaveBeenCalled();
   });
 
-  it('rejects an unknown API key', async () => {
-    authenticateApiKey.mockResolvedValue(null);
-    const { context } = contextFor({ 'x-api-key': 'cms_unknown' });
+  it('rejects a key Better Auth does not accept', async () => {
+    verifyApiKey.mockResolvedValue({
+      valid: false,
+      error: { code: 'KEY_DISABLED' },
+      key: null,
+    });
+    const { context } = contextFor({ 'x-api-key': 'cms_revoked' });
 
     await expect(guard.canActivate(context)).rejects.toBeInstanceOf(
       UnauthorizedException,
@@ -54,17 +54,30 @@ describe('ApiKeyGuard', () => {
   });
 
   it('attaches the organization behind a valid API key', async () => {
-    authenticateApiKey.mockResolvedValue({
-      id: 'key-a',
-      organizationId: 'organization-a',
+    verifyApiKey.mockResolvedValue({
+      valid: true,
+      error: null,
+      key: { id: 'key-a', referenceId: 'organization-a' },
     });
     const { context, request } = contextFor({ 'x-api-key': ' cms_valid ' });
 
     await expect(guard.canActivate(context)).resolves.toBe(true);
-    expect(authenticateApiKey).toHaveBeenCalledWith('cms_valid');
+    expect(verifyApiKey).toHaveBeenCalledWith({
+      body: { key: 'cms_valid', configId: ORGANIZATION_API_KEY_CONFIG_ID },
+    });
     expect(request.apiKey).toEqual({
       id: 'key-a',
       organizationId: 'organization-a',
     });
+  });
+
+  it('refuses a key from another configuration, which would not be an organization', async () => {
+    verifyApiKey.mockResolvedValue({ valid: true, error: null, key: null });
+    const { context, request } = contextFor({ 'x-api-key': 'cms_user_scoped' });
+
+    await expect(guard.canActivate(context)).rejects.toBeInstanceOf(
+      UnauthorizedException,
+    );
+    expect(request.apiKey).toBeUndefined();
   });
 });

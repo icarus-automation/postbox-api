@@ -30,7 +30,7 @@ const fields: LeadField[] = [
     options: ['POS', 'PMS', 'Other'],
   }),
   leadField('source', FieldType.url, { isRequired: true }),
-  leadField('draftOpener', FieldType.long_text),
+  leadField('note', FieldType.long_text),
   leadField('status', FieldType.select, {
     isReadOnly: true,
     options: ['new', 'contacted'],
@@ -102,18 +102,18 @@ describe('parseLeadValues', () => {
   });
 
   it('only checks the given keys on update', () => {
-    expect(errorsFor({ draftOpener: 'Saw your post' }, 'update')).toEqual([]);
+    expect(errorsFor({ note: 'Saw your post' }, 'update')).toEqual([]);
   });
 
   it('ignores null on create and clears on update', () => {
     expect(
-      parseLeadValues(fields, { ...complete, draftOpener: null }, 'create')
+      parseLeadValues(fields, { ...complete, note: null }, 'create')
         .clear,
     ).toEqual([]);
 
-    const changes = parseLeadValues(fields, { draftOpener: null }, 'update');
+    const changes = parseLeadValues(fields, { note: null }, 'update');
     expect(changes.set).toEqual([]);
-    expect(changes.clear.map((field) => field.key)).toEqual(['draftOpener']);
+    expect(changes.clear.map((field) => field.key)).toEqual(['note']);
   });
 
   it('refuses to clear a required field', () => {
@@ -129,7 +129,7 @@ describe('parseLeadValues', () => {
           candidate: '   ',
           product: 'CRM',
           source: 'ftp://example.com/file',
-          draftOpener: 'x'.repeat(5001),
+          note: 'x'.repeat(5001),
           dealSize: '1200',
           followUpOn: '2026-02-30',
         },
@@ -139,7 +139,7 @@ describe('parseLeadValues', () => {
       'values.candidate must be non-blank text of at most 500 characters',
       'values.product must be one of: POS, PMS, Other',
       'values.source must be an http or https URL of at most 2048 characters',
-      'values.draftOpener must be non-blank text of at most 5000 characters',
+      'values.note must be non-blank text of at most 5000 characters',
       'values.dealSize must be a number',
       'values.followUpOn must be a date formatted YYYY-MM-DD',
     ]);

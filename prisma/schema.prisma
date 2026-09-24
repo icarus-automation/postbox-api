@@ -18,7 +18,6 @@ model User {
   accounts      Account[]
   members       Member[]
   invitations   Invitation[]
-  apiKeys       ApiKey[]
 
   @@map("users")
 }
@@ -125,22 +124,36 @@ model RateLimit {
 
   @@map("rate_limits")
 }
+// Owned by the Better Auth API key plugin. Field names are the plugin's; the
+// column names are the ones the table already had. `referenceId` is the owning
+// organization, because the plugin is configured with references: "organization".
 model ApiKey {
-  id             String       @id @default(uuid(7))
-  name           String
-  keyPrefix      String       @map("key_prefix")
-  keyHash        String       @unique @map("key_hash")
-  organizationId String       @map("organization_id")
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  createdById    String       @map("created_by_id")
-  createdBy      User         @relation(fields: [createdById], references: [id], onDelete: Cascade)
-  lastUsedAt     DateTime?    @map("last_used_at")
-  revokedAt      DateTime?    @map("revoked_at")
-  createdAt      DateTime     @default(now()) @map("created_at")
-  updatedAt      DateTime     @updatedAt @map("updated_at")
+  id                  String       @id
+  configId            String       @map("config_id")
+  name                String
+  prefix              String?
+  start               String?      @map("key_prefix")
+  key                 String       @unique @map("key_hash")
+  referenceId         String       @map("organization_id")
+  organization        Organization @relation(fields: [referenceId], references: [id], onDelete: Cascade)
+  enabled             Boolean      @default(true)
+  rateLimitEnabled    Boolean      @default(true) @map("rate_limit_enabled")
+  rateLimitTimeWindow Int?         @map("rate_limit_time_window")
+  rateLimitMax        Int?         @map("rate_limit_max")
+  requestCount        Int          @default(0) @map("request_count")
+  remaining           Int?
+  refillInterval      Int?         @map("refill_interval")
+  refillAmount        Int?         @map("refill_amount")
+  lastRefillAt        DateTime?    @map("last_refill_at")
+  lastRequest         DateTime?    @map("last_used_at")
+  expiresAt           DateTime?    @map("expires_at")
+  permissions         String?
+  metadata            String?
+  createdAt           DateTime     @default(now()) @map("created_at")
+  updatedAt           DateTime     @updatedAt @map("updated_at")
 
-  @@index([organizationId])
-  @@index([createdById])
+  @@index([referenceId])
+  @@index([configId])
   @@map("api_keys")
 }
 
@@ -190,10 +203,13 @@ model Lead {
   organizationId String       @map("organization_id")
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   values         LeadValue[]
+  // Archive is its own axis, not a stage: an archived lead keeps the status it
+  // reached and only leaves the inbox.
+  isArchived     Boolean      @default(false) @map("is_archived")
   createdAt      DateTime     @default(now()) @map("created_at")
   updatedAt      DateTime     @updatedAt @map("updated_at")
 
-  @@index([organizationId, createdAt])
+  @@index([organizationId, isArchived, createdAt])
   @@map("leads")
 }
 

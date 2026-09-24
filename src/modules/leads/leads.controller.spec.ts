@@ -1,8 +1,6 @@
 import { NotFoundException } from '@nestjs/common';
-import { Test, TestingModule } from '@nestjs/testing';
+import { mock, mockReset } from 'jest-mock-extended';
 
-import { ApiKeyGuard } from '../api-keys/guards/api-key.guard';
-import { SessionOrApiKeyGuard } from '../api-keys/guards/session-or-api-key.guard';
 import type { OrganizationSession } from '../auth/types/auth.types';
 import type { CreateLeadDTO } from './dto/create-lead.dto';
 import { LeadsController } from './leads.controller';
@@ -20,39 +18,15 @@ const body: CreateLeadDTO = {
 };
 
 describe('LeadsController', () => {
-  const createLead = jest.fn<LeadsService['createLead']>();
-  const getLead = jest.fn<LeadsService['getLead']>();
-  const updateLeadValues = jest.fn<LeadsService['updateLeadValues']>();
-  const setLeadStatus = jest.fn<LeadsService['setLeadStatus']>();
-
-  let controller: LeadsController;
+  const leadsService = mock<LeadsService>();
+  const controller = new LeadsController(leadsService);
 
   const session = {
     session: { activeOrganizationId: 'organization-a' },
   } as OrganizationSession;
 
-  beforeEach(async () => {
-    createLead.mockReset();
-    getLead.mockReset();
-    updateLeadValues.mockReset();
-    setLeadStatus.mockReset();
-
-    const module: TestingModule = await Test.createTestingModule({
-      controllers: [LeadsController],
-      providers: [
-        {
-          provide: LeadsService,
-          useValue: { createLead, getLead, updateLeadValues, setLeadStatus },
-        },
-      ],
-    })
-      .overrideGuard(ApiKeyGuard)
-      .useValue({ canActivate: () => true })
-      .overrideGuard(SessionOrApiKeyGuard)
-      .useValue({ canActivate: () => true })
-      .compile();
-
-    controller = module.get(LeadsController);
+  beforeEach(() => {
+    mockReset(leadsService);
   });
 
   it('files a machine-created lead under the API key organization', async () => {
@@ -61,27 +35,27 @@ describe('LeadsController', () => {
       organizationId: 'organization-b',
     });
 
-    expect(createLead).toHaveBeenCalledWith('organization-b', body);
+    expect(leadsService.createLead).toHaveBeenCalledWith('organization-b', body);
   });
 
   it('returns not found for leads outside the resolved organization', async () => {
-    getLead.mockResolvedValue(null);
+    leadsService.getLead.mockResolvedValue(null);
 
     await expect(
       controller.getLead('lead-b', 'organization-a'),
     ).rejects.toBeInstanceOf(NotFoundException);
-    expect(getLead).toHaveBeenCalledWith('organization-a', 'lead-b');
+    expect(leadsService.getLead).toHaveBeenCalledWith('organization-a', 'lead-b');
   });
 
   it('edits values on a lead in the session organization', async () => {
     const lead = { id: 'lead-a' } as OrganizationLead;
-    const edit = { values: { draftOpener: 'Saw your post' } };
-    updateLeadValues.mockResolvedValue(lead);
+    const edit = { values: { note: 'Saw your post' } };
+    leadsService.updateLeadValues.mockResolvedValue(lead);
 
     await expect(
       controller.updateLeadValues('lead-a', edit, session),
     ).resolves.toBe(lead);
-    expect(updateLeadValues).toHaveBeenCalledWith(
+    expect(leadsService.updateLeadValues).toHaveBeenCalledWith(
       'organization-a',
       'lead-a',
       edit,
@@ -89,12 +63,12 @@ describe('LeadsController', () => {
   });
 
   it('returns not found when editing a lead outside the active organization', async () => {
-    updateLeadValues.mockResolvedValue(null);
+    leadsService.updateLeadValues.mockResolvedValue(null);
 
     await expect(
       controller.updateLeadValues(
         'lead-b',
-        { values: { draftOpener: null } },
+        { values: { note: null } },
         session,
       ),
     ).rejects.toBeInstanceOf(NotFoundException);
@@ -102,12 +76,12 @@ describe('LeadsController', () => {
 
   it('sets the status on a lead in the session organization', async () => {
     const lead = { id: 'lead-a' } as OrganizationLead;
-    setLeadStatus.mockResolvedValue(lead);
+    leadsService.setLeadStatus.mockResolvedValue(lead);
 
     await expect(
       controller.setLeadStatus('lead-a', { status: 'qualified' }, session),
     ).resolves.toBe(lead);
-    expect(setLeadStatus).toHaveBeenCalledWith(
+    expect(leadsService.setLeadStatus).toHaveBeenCalledWith(
       'organization-a',
       'lead-a',
       'qualified',
@@ -115,10 +89,32 @@ describe('LeadsController', () => {
   });
 
   it('returns not found when changing a lead outside the active organization', async () => {
-    setLeadStatus.mockResolvedValue(null);
+    leadsService.setLeadStatus.mockResolvedValue(null);
 
     await expect(
-      controller.setLeadStatus('lead-b', { status: 'archived' }, session),
+      controller.setLeadStatus('lead-b', { status: 'qualified' }, session),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('archives a lead in the session organization', async () => {
+    const lead = { id: 'lead-a' } as OrganizationLead;
+    leadsService.setLeadArchived.mockResolvedValue(lead);
+
+    await expect(
+      controller.setLeadArchived('lead-a', { isArchived: true }, session),
+    ).resolves.toBe(lead);
+    expect(leadsService.setLeadArchived).toHaveBeenCalledWith(
+      'organization-a',
+      'lead-a',
+      true,
+    );
+  });
+
+  it('returns not found when archiving a lead outside the active organization', async () => {
+    leadsService.setLeadArchived.mockResolvedValue(null);
+
+    await expect(
+      controller.setLeadArchived('lead-b', { isArchived: true }, session),
     ).rejects.toBeInstanceOf(NotFoundException);
   });
 });

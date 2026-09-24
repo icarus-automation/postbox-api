@@ -1,143 +1,142 @@
-import { createHash } from 'node:crypto';
+import type { AuthService } from '@thallesp/nestjs-better-auth';
+import { mock } from 'jest-mock-extended';
 
-import { Test, TestingModule } from '@nestjs/testing';
-
-import { PrismaService } from '../../core/database/prisma.service';
+import type { Auth } from '../auth/auth';
 import { ApiKeysService } from './api-keys.service';
+import type { StoredApiKey } from './types/api-keys.types';
 
-type StoredApiKey = {
-  name: string;
-  keyPrefix: string;
-  keyHash: string;
-  organizationId: string;
-  createdById: string;
-};
+const createdAt = new Date('2026-09-12T00:00:00.000Z');
+const revokedAt = new Date('2026-09-14T00:00:00.000Z');
 
-type ScopedApiKeyQuery = {
-  where: {
-    id: string;
-    organizationId: string;
+function storedKey(overrides: Partial<StoredApiKey> = {}): StoredApiKey {
+  return {
+    id: 'key-a',
+    name: 'postman',
+    start: 'cms_AbCdEfGh',
+    enabled: true,
+    lastRequest: null,
+    createdAt,
+    updatedAt: createdAt,
+    ...overrides,
   };
-};
-
-function sha256(value: string): string {
-  return createHash('sha256').update(value).digest('hex');
 }
 
 describe('ApiKeysService', () => {
-  const create = jest.fn();
-  const findMany = jest.fn();
-  const findFirst = jest.fn();
-  const findUnique = jest.fn();
-  const update = jest.fn();
+  const createApiKey = jest.fn();
+  const listApiKeys = jest.fn();
+  const updateApiKey = jest.fn();
 
-  let service: ApiKeysService;
-
-  beforeEach(async () => {
-    create.mockReset();
-    findMany.mockReset();
-    findFirst.mockReset();
-    findUnique.mockReset();
-    update.mockReset();
-
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        ApiKeysService,
-        {
-          provide: PrismaService,
-          useValue: {
-            apiKey: { create, findMany, findFirst, findUnique, update },
-          },
-        },
-      ],
-    }).compile();
-
-    service = module.get(ApiKeysService);
+  // Three endpoints stand in for the whole Better Auth server API, which is
+  // wider than anything this service reaches for.
+  const authService = mock<AuthService<Auth>>({
+    api: { createApiKey, listApiKeys, updateApiKey } as unknown as Auth['api'],
   });
 
-  it('returns the raw key once and stores only its hash', async () => {
-    let stored: StoredApiKey | undefined;
+  const service = new ApiKeysService(authService);
+  const headers = new Headers();
 
-    create.mockImplementation(({ data }: { data: StoredApiKey }) => {
-      stored = data;
-      return Promise.resolve({
-        id: 'key-a',
-        name: data.name,
-        keyPrefix: data.keyPrefix,
-        lastUsedAt: null,
-        revokedAt: null,
-        createdAt: new Date('2026-09-12T00:00:00.000Z'),
-      });
-    });
+  beforeEach(() => {
+    createApiKey.mockReset();
+    listApiKeys.mockReset();
+    updateApiKey.mockReset();
+  });
+
+  it('asks Better Auth to mint the key for the calling organization', async () => {
+    createApiKey.mockResolvedValue({ ...storedKey(), key: 'cms_AbCdEfGh1234' });
 
     const created = await service.createApiKey('organization-a', 'user-a', {
       name: 'postman',
     });
 
-    expect(created.key).toMatch(/^cms_[A-Za-z0-9_-]{43}$/);
-    expect(stored).toBeDefined();
-    expect(stored?.keyHash).toBe(sha256(created.key));
-    expect(JSON.stringify(stored)).not.toContain(created.key);
-    expect(stored?.keyPrefix).toBe(created.key.slice(0, 12));
-    expect(stored?.organizationId).toBe('organization-a');
-    expect(stored?.createdById).toBe('user-a');
-  });
-
-  it('authenticates an active key by hash and records its use', async () => {
-    const key = 'cms_a-key-handed-to-a-machine';
-    findUnique.mockResolvedValue({
+    expect(createApiKey).toHaveBeenCalledWith({
+      body: {
+        name: 'postman',
+        organizationId: 'organization-a',
+        userId: 'user-a',
+        metadata: { createdById: 'user-a' },
+      },
+    });
+    expect(created).toEqual({
       id: 'key-a',
-      organizationId: 'organization-a',
+      name: 'postman',
+      keyPrefix: 'cms_AbCdEfGh',
+      lastUsedAt: null,
       revokedAt: null,
+      createdAt,
+      key: 'cms_AbCdEfGh1234',
     });
-    update.mockResolvedValue({});
-
-    await expect(service.authenticateApiKey(key)).resolves.toEqual({
-      id: 'key-a',
-      organizationId: 'organization-a',
-    });
-    expect(findUnique).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { keyHash: sha256(key) } }),
-    );
-    expect(update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { id: 'key-a' },
-        data: { lastUsedAt: expect.any(Date) as Date },
-      }),
-    );
   });
 
-  it('rejects unknown and revoked keys', async () => {
-    findUnique.mockResolvedValueOnce(null);
-    await expect(service.authenticateApiKey('cms_unknown')).resolves.toBeNull();
+  it('returns the raw key once and never a stored digest', async () => {
+    createApiKey.mockResolvedValue({ ...storedKey(), key: 'cms_raw' });
+    listApiKeys.mockResolvedValue({ apiKeys: [storedKey()] });
 
-    findUnique.mockResolvedValueOnce({
-      id: 'key-b',
-      organizationId: 'organization-a',
-      revokedAt: new Date('2026-09-12T00:00:00.000Z'),
+    const created = await service.createApiKey('organization-a', 'user-a', {
+      name: 'postman',
     });
-    await expect(service.authenticateApiKey('cms_revoked')).resolves.toBeNull();
+    const [listed] = await service.getAllApiKeys('organization-a', headers);
 
-    expect(update).not.toHaveBeenCalled();
+    expect(created.key).toBe('cms_raw');
+    expect(Object.keys(listed)).not.toContain('key');
+    expect(JSON.stringify(listed)).not.toContain('cms_raw');
+  });
+
+  it('lists only the keys of the calling organization, newest first', async () => {
+    listApiKeys.mockResolvedValue({ apiKeys: [] });
+
+    await service.getAllApiKeys('organization-a', headers);
+
+    expect(listApiKeys).toHaveBeenCalledWith({
+      headers,
+      query: {
+        organizationId: 'organization-a',
+        sortBy: 'createdAt',
+        sortDirection: 'desc',
+      },
+    });
+  });
+
+  it('reports a disabled key as revoked when it was last changed', async () => {
+    listApiKeys.mockResolvedValue({
+      apiKeys: [storedKey({ enabled: false, updatedAt: revokedAt })],
+    });
+
+    await expect(
+      service.getAllApiKeys('organization-a', headers),
+    ).resolves.toEqual([expect.objectContaining({ revokedAt })]);
+  });
+
+  it('revokes by disabling the key rather than deleting it', async () => {
+    listApiKeys.mockResolvedValue({ apiKeys: [storedKey()] });
+    updateApiKey.mockResolvedValue(
+      storedKey({ enabled: false, updatedAt: revokedAt }),
+    );
+
+    await expect(
+      service.revokeApiKey('organization-a', 'key-a', 'user-a', headers),
+    ).resolves.toEqual(expect.objectContaining({ id: 'key-a', revokedAt }));
+    expect(updateApiKey).toHaveBeenCalledWith({
+      body: { keyId: 'key-a', enabled: false, userId: 'user-a' },
+    });
+  });
+
+  it('leaves the first revocation time alone on a second revoke', async () => {
+    listApiKeys.mockResolvedValue({
+      apiKeys: [storedKey({ enabled: false, updatedAt: revokedAt })],
+    });
+
+    await expect(
+      service.revokeApiKey('organization-a', 'key-a', 'user-a', headers),
+    ).resolves.toEqual(expect.objectContaining({ revokedAt }));
+    expect(updateApiKey).not.toHaveBeenCalled();
   });
 
   it('cannot revoke a key belonging to another organization', async () => {
-    findFirst.mockImplementation(({ where }: ScopedApiKeyQuery) =>
-      Promise.resolve(
-        where.organizationId === 'organization-a'
-          ? { id: where.id, revokedAt: null }
-          : null,
-      ),
-    );
-    update.mockResolvedValue({ id: 'key-a', revokedAt: new Date() });
+    listApiKeys.mockResolvedValue({ apiKeys: [] });
 
     await expect(
-      service.revokeApiKey('organization-b', 'key-a'),
+      service.revokeApiKey('organization-b', 'key-a', 'user-a', headers),
     ).resolves.toBeNull();
-    expect(update).not.toHaveBeenCalled();
-
-    await expect(
-      service.revokeApiKey('organization-a', 'key-a'),
-    ).resolves.toEqual(expect.objectContaining({ id: 'key-a' }));
+    expect(updateApiKey).not.toHaveBeenCalled();
   });
 });
