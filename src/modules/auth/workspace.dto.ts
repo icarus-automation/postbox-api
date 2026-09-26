@@ -16,7 +16,7 @@ import {
   IMAGE_CONTENT_TYPES,
   MAX_IMAGE_BYTES,
   type ImageContentType,
-} from '../content/document/content.types';
+} from '../blog/document/blog.types';
 
 export class SlugPreviewDto {
   @IsString()

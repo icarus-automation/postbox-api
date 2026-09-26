@@ -12,8 +12,8 @@ import {
   IMAGE_CONTENT_TYPES,
   MAX_IMAGE_BYTES,
   type ImageContentType,
-} from '../content/document/content.types';
-import type { ObjectStorage } from '../content/object-storage';
+} from '../blog/document/blog.types';
+import type { ObjectStorage } from '../blog/object-storage';
 import type { Auth } from './auth';
 
 const SLUG_MAX_LENGTH = 40;

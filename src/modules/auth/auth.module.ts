@@ -1,8 +1,8 @@
 import { Module } from '@nestjs/common';
 import { AuthModule as BetterAuthModule } from '@thallesp/nestjs-better-auth';
 
-import { OBJECT_STORAGE } from '../content/object-storage';
-import { R2ObjectStorage } from '../content/r2-object-storage';
+import { OBJECT_STORAGE } from '../blog/object-storage';
+import { R2ObjectStorage } from '../blog/r2-object-storage';
 import { auth } from './auth';
 import { SetPasswordController } from './set-password.controller';
 import { WorkspaceController } from './workspace.controller';

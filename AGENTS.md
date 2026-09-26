@@ -8,6 +8,8 @@ The API behind a CMS for the owner's own sites and agents today, headed for a pu
 
 Phase 1 domain is leads. Machines post them to `POST /api/v1/leads`, the owner reads them and sets their status in the client. `docs/fe-phase1-api.md` and `docs/fe-lead-fields-api.md` are the contracts the client repo builds against. Keep them true when routes or fields change.
 
+The blog is the second domain. A post is a list of blocks, filed under at most one category and any number of tags, all scoped to the organization. A person writes and publishes in the client, and agents can file drafts with an API key. Websites read published posts, categories and tags with a public key under `/api/v1/public/:orgSlug/blog`. `docs/public-content-api.md` is that contract. Keep it true when those routes, fields or webhook events change.
+
 Record attributes come from organization-scoped field definitions per collection (`FieldDefinition`, only `lead` wired so far). System fields ship with every organization and cannot be deleted, and admins add custom ones. A lead stores one `LeadValue` row per filled field, and every write is checked against the definitions, refusing unknown and read-only keys. Organization provisioning seeds the system fields from `src/modules/leads/lead-system-fields.ts`.
 
 ## Stack
@@ -20,7 +22,7 @@ Record attributes come from organization-scoped field definitions per collection
 
 ## Repository Map
 
-- `src/modules`: business features such as auth, api keys and leads
+- `src/modules`: business features such as auth, api keys, leads and the blog
 - `src/core`: infrastructure, configuration, database, health, and security
 - `src/common`: shared transport concerns with no feature-specific business logic
 - `prisma/schema.prisma`: database model
@@ -79,6 +81,16 @@ Record attributes come from organization-scoped field definitions per collection
 - An API key carries its own organization. Scope machine reads and writes by the key organization, never by a session.
 - Leads start as `new`, and only a session moves them, through `PATCH /api/v1/leads/:id/status`. Never open that route to an API key, because agents must not advance a lead. `status` stays a read-only lead field so no values write can move it.
 - Archiving is not a status. `Lead.isArchived` is its own column, moved by `PATCH /api/v1/leads/:id/archive`, and it never touches `status`, so a restored lead comes back at the stage it left on. `GET /api/v1/leads` reads the inbox by default and the archive with `archived=true`, never both. That route is session only for the same reason as status.
+
+## Blog Invariants
+
+- A post slug is unique per organization. A write that asks for a taken slug gets the first free `-2`, `-3` and so on. `writeWithFreeSlug` in `src/modules/blog/free-slug.ts` reads the taken slugs and retries when the unique index refuses a race.
+- `Post.hasCustomSlug` stays false until a person or an agent sends a slug. While it is false and the post is a draft, every write makes the slug from the title. `slug: null` hands the slug back to the title. A published post keeps its slug until someone sends a new one.
+- An API key creates and patches drafts, and reads posts, categories and tags. Publish, unpublish, `PUT /api/v1/blog/posts/:id`, category and tag writes, and `/blog/access` stay session only.
+- Any member adds a category or a tag. Only owners and admins rename or delete one. Adding a name that exists in any case returns the existing one.
+- Deleting a category or a tag never deletes a post. `posts.category_id` is set to null and `post_tags` rows cascade. Renaming or deleting one sends `post.updated` for every published post it was on.
+- The public category and tag lists leave out anything with no published post, so a name made for a draft stays off the site.
+- Webhooks are `post.published`, `post.unpublished` and `post.updated`, signed in `X-Blog-Signature`.
 
 ## Prisma Rules
 

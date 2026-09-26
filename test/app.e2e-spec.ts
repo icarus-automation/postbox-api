@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import { INestApplication, VersioningType } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { FieldType } from '@prisma/client';
@@ -33,6 +35,9 @@ const leadFields = [
   },
 ];
 
+const PUBLIC_KEY = 'pub_e2e-key';
+const PUBLIC_KEY_HASH = createHash('sha256').update(PUBLIC_KEY).digest('hex');
+
 // Better Auth owns key verification now, and it reads through its own Prisma
 // client rather than the injected one, so the key seam for these tests is the
 // verify call itself.
@@ -43,6 +48,14 @@ describe('Application authentication (e2e)', () => {
   const leadCount = jest.fn();
   const leadFindMany = jest.fn();
   const leadFindFirst = jest.fn();
+  const organizationFindUnique = jest.fn();
+  const blogAccessFindUnique = jest.fn();
+  const postCount = jest.fn();
+  const postFindMany = jest.fn();
+  const postFindFirst = jest.fn();
+  const postCreate = jest.fn();
+  const categoryFindMany = jest.fn();
+  const tagFindMany = jest.fn();
 
   let app: INestApplication<App>;
 
@@ -59,6 +72,16 @@ describe('Application authentication (e2e)', () => {
           findMany: leadFindMany,
           findFirst: leadFindFirst,
         },
+        organization: { findUnique: organizationFindUnique },
+        blogAccess: { findUnique: blogAccessFindUnique },
+        post: {
+          count: postCount,
+          findMany: postFindMany,
+          findFirst: postFindFirst,
+          create: postCreate,
+        },
+        category: { findMany: categoryFindMany },
+        tag: { findMany: tagFindMany },
       })
       .overrideProvider(AuthService)
       .useValue({ api: { verifyApiKey } })
@@ -90,6 +113,21 @@ describe('Application authentication (e2e)', () => {
     leadFindMany.mockReset();
     leadFindMany.mockResolvedValue([]);
     leadFindFirst.mockReset();
+    organizationFindUnique.mockReset();
+    organizationFindUnique.mockResolvedValue({ id: 'organization-a', slug: 'acme' });
+    blogAccessFindUnique.mockReset();
+    blogAccessFindUnique.mockResolvedValue({ publicKeyHash: PUBLIC_KEY_HASH });
+    postCount.mockReset();
+    postCount.mockResolvedValue(0);
+    postFindMany.mockReset();
+    postFindMany.mockResolvedValue([]);
+    postFindFirst.mockReset();
+    postFindFirst.mockResolvedValue(null);
+    postCreate.mockReset();
+    categoryFindMany.mockReset();
+    categoryFindMany.mockResolvedValue([]);
+    tagFindMany.mockReset();
+    tagFindMany.mockResolvedValue([]);
   });
 
   function acceptApiKey(): void {
@@ -386,6 +424,202 @@ describe('Application authentication (e2e)', () => {
       .query({ archived: 'yes' })
       .set('x-api-key', 'cms_valid')
       .expect(400);
+  });
+
+  describe('blog', () => {
+    const publishedAt = new Date('2026-09-24T08:00:00.000Z');
+
+    it('no longer serves the content routes', async () => {
+      await request(app.getHttpServer()).get('/api/v1/content').expect(404);
+      await request(app.getHttpServer())
+        .get('/api/v1/public/acme/content')
+        .set('x-public-key', PUBLIC_KEY)
+        .expect(404);
+    });
+
+    it('refuses the public blog without the public key', async () => {
+      await request(app.getHttpServer()).get('/api/v1/public/acme/blog/posts').expect(401);
+      await request(app.getHttpServer())
+        .get('/api/v1/public/acme/blog/posts')
+        .set('x-public-key', 'pub_wrong')
+        .expect(401);
+
+      expect(postFindMany).not.toHaveBeenCalled();
+    });
+
+    it('lists published posts in a category and with a tag, never drafts', async () => {
+      postCount.mockResolvedValue(1);
+      postFindMany.mockResolvedValue([
+        {
+          id: 'post-1',
+          title: 'Spring openings',
+          slug: 'spring-openings',
+          excerpt: 'Roles we are hiring for.',
+          status: 'published',
+          publishedAt,
+          updatedAt: publishedAt,
+          coverImage: null,
+          category: { id: 'category-1', name: 'News', slug: 'news' },
+          tags: [{ tag: { id: 'tag-1', name: 'Hiring', slug: 'hiring' } }],
+        },
+      ]);
+
+      const response = await request(app.getHttpServer())
+        .get('/api/v1/public/acme/blog/posts')
+        .query({ category: 'news', tag: 'hiring' })
+        .set('x-public-key', PUBLIC_KEY)
+        .expect(200)
+        .expect('Cache-Control', 'public, max-age=60');
+
+      const where = {
+        organizationId: 'organization-a',
+        status: 'published',
+        category: { is: { slug: 'news' } },
+        tags: { some: { tag: { slug: 'hiring' } } },
+      };
+      expect(postCount).toHaveBeenCalledWith({ where });
+      expect(postFindMany).toHaveBeenCalledWith(expect.objectContaining({ where }));
+      expect(response.body).toEqual({
+        data: [
+          {
+            title: 'Spring openings',
+            slug: 'spring-openings',
+            excerpt: 'Roles we are hiring for.',
+            publishedAt: publishedAt.toISOString(),
+            coverImage: null,
+            category: { name: 'News', slug: 'news' },
+            tags: [{ name: 'Hiring', slug: 'hiring' }],
+          },
+        ],
+        meta: { total: 1, page: 1, limit: 10, lastPage: 1 },
+      });
+    });
+
+    it('refuses a filter that is not a slug', async () => {
+      await request(app.getHttpServer())
+        .get('/api/v1/public/acme/blog/posts')
+        .query({ category: 'Big News' })
+        .set('x-public-key', PUBLIC_KEY)
+        .expect(400);
+    });
+
+    it('answers 404 for a slug that is not published', async () => {
+      await request(app.getHttpServer())
+        .get('/api/v1/public/acme/blog/posts/still-a-draft')
+        .set('x-public-key', PUBLIC_KEY)
+        .expect(404);
+
+      expect(postFindFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            organizationId: 'organization-a',
+            slug: 'still-a-draft',
+            status: 'published',
+          },
+        }),
+      );
+    });
+
+    it('lists categories and tags that have published posts', async () => {
+      categoryFindMany.mockResolvedValue([
+        { name: 'News', slug: 'news', _count: { posts: 2 } },
+      ]);
+      tagFindMany.mockResolvedValue([
+        { name: 'Hiring', slug: 'hiring', _count: { posts: 1 } },
+      ]);
+
+      await request(app.getHttpServer())
+        .get('/api/v1/public/acme/blog/categories')
+        .set('x-public-key', PUBLIC_KEY)
+        .expect(200)
+        .expect([{ name: 'News', slug: 'news', postCount: 2 }]);
+      await request(app.getHttpServer())
+        .get('/api/v1/public/acme/blog/tags')
+        .set('x-public-key', PUBLIC_KEY)
+        .expect(200)
+        .expect([{ name: 'Hiring', slug: 'hiring', postCount: 1 }]);
+
+      expect(categoryFindMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { organizationId: 'organization-a', posts: { some: { status: 'published' } } },
+        }),
+      );
+    });
+
+    it('lets an API key file a draft with a slug from its title', async () => {
+      acceptApiKey();
+      postCreate.mockImplementation(({ data }: { data: Record<string, unknown> }) =>
+        Promise.resolve({
+          id: 'post-1',
+          organizationId: data.organizationId,
+          title: data.title,
+          slug: data.slug,
+          hasCustomSlug: data.hasCustomSlug,
+          excerpt: data.excerpt,
+          metaTitle: data.metaTitle,
+          metaDescription: data.metaDescription,
+          ogImage: null,
+          coverImage: null,
+          category: null,
+          tags: [],
+          status: data.status,
+          publishedAt: data.publishedAt,
+          blocks: data.blocks,
+          createdAt: publishedAt,
+          updatedAt: publishedAt,
+        }),
+      );
+
+      const response = await request(app.getHttpServer())
+        .post('/api/v1/blog/posts')
+        .set('x-api-key', 'cms_valid')
+        .send({ title: 'Agent notes' })
+        .expect(201);
+
+      expect(response.body).toMatchObject({
+        slug: 'agent-notes',
+        hasCustomSlug: false,
+        status: 'draft',
+      });
+      expect(postCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ organizationId: 'organization-a' }) as unknown,
+        }),
+      );
+    });
+
+    it('never lets an API key publish or manage categories and tags', async () => {
+      acceptApiKey();
+
+      await request(app.getHttpServer())
+        .post('/api/v1/blog/posts/post-1/publish')
+        .set('x-api-key', 'cms_valid')
+        .expect(401);
+      await request(app.getHttpServer())
+        .post('/api/v1/blog/categories')
+        .set('x-api-key', 'cms_valid')
+        .send({ name: 'News' })
+        .expect(401);
+      await request(app.getHttpServer())
+        .delete('/api/v1/blog/tags/tag-1')
+        .set('x-api-key', 'cms_valid')
+        .expect(401);
+
+      expect(verifyApiKey).not.toHaveBeenCalled();
+    });
+
+    it('lets an API key read the categories it can file under', async () => {
+      acceptApiKey();
+      categoryFindMany.mockResolvedValue([
+        { id: 'category-1', name: 'News', slug: 'news', _count: { posts: 4 } },
+      ]);
+
+      await request(app.getHttpServer())
+        .get('/api/v1/blog/categories')
+        .set('x-api-key', 'cms_valid')
+        .expect(200)
+        .expect([{ id: 'category-1', name: 'News', slug: 'news', postCount: 4 }]);
+    });
   });
 
   afterAll(async () => {

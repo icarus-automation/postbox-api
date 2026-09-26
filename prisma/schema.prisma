@@ -83,9 +83,11 @@ model Organization {
   apiKeys          ApiKey[]
   fieldDefinitions FieldDefinition[]
   leads            Lead[]
-  contentEntries   ContentEntry[]
+  posts            Post[]
+  categories       Category[]
+  tags             Tag[]
   media            Media[]
-  contentAccess    ContentAccess?
+  blogAccess       BlogAccess?
 
   @@map("organizations")
 }
@@ -230,64 +232,105 @@ model LeadValue {
   @@map("lead_values")
 }
 
-enum ContentKind {
-  post
-  page
-
-  @@map("content_kind")
-}
-
-enum ContentStatus {
+enum PostStatus {
   draft
   published
 
-  @@map("content_status")
+  @@map("post_status")
 }
 
-model ContentEntry {
-  id              String        @id @default(uuid(7))
-  organizationId  String        @map("organization_id")
-  organization    Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  kind            ContentKind
+model Post {
+  id              String       @id @default(uuid(7))
+  organizationId  String       @map("organization_id")
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   title           String
   slug            String
-  excerpt         String        @default("")
-  metaTitle       String        @default("") @map("meta_title")
-  metaDescription String        @default("") @map("meta_description")
-  ogImageId       String?       @map("og_image_id")
-  ogImage         Media?        @relation("EntryOgImage", fields: [ogImageId], references: [id], onDelete: Restrict)
-  coverImageId    String?       @map("cover_image_id")
-  coverImage      Media?        @relation("EntryCoverImage", fields: [coverImageId], references: [id], onDelete: Restrict)
-  status          ContentStatus @default(draft)
-  publishedAt     DateTime?     @map("published_at")
+  // False while the slug is made from the title. Set once a person types their
+  // own, and from then on a title edit leaves the slug alone.
+  hasCustomSlug   Boolean      @default(false) @map("has_custom_slug")
+  excerpt         String       @default("")
+  metaTitle       String       @default("") @map("meta_title")
+  metaDescription String       @default("") @map("meta_description")
+  ogImageId       String?      @map("og_image_id")
+  ogImage         Media?       @relation("PostOgImage", fields: [ogImageId], references: [id], onDelete: Restrict)
+  coverImageId    String?      @map("cover_image_id")
+  coverImage      Media?       @relation("PostCoverImage", fields: [coverImageId], references: [id], onDelete: Restrict)
+  // Deleting a category leaves its posts in place, without one.
+  categoryId      String?      @map("category_id")
+  category        Category?    @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  tags            PostTag[]
+  status          PostStatus   @default(draft)
+  publishedAt     DateTime?    @map("published_at")
   blocks          Json
-  createdAt       DateTime      @default(now()) @map("created_at")
-  updatedAt       DateTime      @updatedAt @map("updated_at")
+  createdAt       DateTime     @default(now()) @map("created_at")
+  updatedAt       DateTime     @updatedAt @map("updated_at")
 
   @@unique([organizationId, slug])
-  @@index([organizationId, status, kind, updatedAt])
+  @@index([organizationId, status, updatedAt])
   @@index([organizationId, status, publishedAt])
-  @@map("content_entries")
+  @@index([categoryId])
+  @@map("posts")
+}
+
+model Category {
+  id             String       @id @default(uuid(7))
+  organizationId String       @map("organization_id")
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  slug           String
+  posts          Post[]
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+
+  @@unique([organizationId, slug])
+  @@map("categories")
+}
+
+model Tag {
+  id             String       @id @default(uuid(7))
+  organizationId String       @map("organization_id")
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  slug           String
+  posts          PostTag[]
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+
+  @@unique([organizationId, slug])
+  @@map("tags")
+}
+
+// One row per tag on a post. Deleting the tag or the post deletes the row, and
+// never the other side.
+model PostTag {
+  postId String @map("post_id")
+  post   Post   @relation(fields: [postId], references: [id], onDelete: Cascade)
+  tagId  String @map("tag_id")
+  tag    Tag    @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([postId, tagId])
+  @@index([tagId])
+  @@map("post_tags")
 }
 
 model Media {
-  id             String         @id @default(uuid(7))
-  organizationId String         @map("organization_id")
-  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  storageKey     String         @unique @map("storage_key")
-  contentType    String         @map("content_type")
-  byteSize       Int            @map("byte_size")
+  id             String       @id @default(uuid(7))
+  organizationId String       @map("organization_id")
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  storageKey     String       @unique @map("storage_key")
+  contentType    String       @map("content_type")
+  byteSize       Int          @map("byte_size")
   alt            String
-  createdAt      DateTime       @default(now()) @map("created_at")
-  updatedAt      DateTime       @updatedAt @map("updated_at")
-  ogEntries      ContentEntry[] @relation("EntryOgImage")
-  coverEntries   ContentEntry[] @relation("EntryCoverImage")
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+  ogPosts        Post[]       @relation("PostOgImage")
+  coverPosts     Post[]       @relation("PostCoverImage")
 
   @@index([organizationId])
   @@map("media")
 }
 
-model ContentAccess {
+model BlogAccess {
   organizationId String       @id @map("organization_id")
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   publicKeyHash  String?      @map("public_key_hash")
@@ -297,5 +340,5 @@ model ContentAccess {
   createdAt      DateTime     @default(now()) @map("created_at")
   updatedAt      DateTime     @updatedAt @map("updated_at")
 
-  @@map("content_access")
+  @@map("blog_access")
 }

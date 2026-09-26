@@ -12,7 +12,7 @@ import { fromNodeHeaders } from 'better-auth/node';
 
 import { env } from '../../core/config/env.config';
 import { PrismaService } from '../../core/database/prisma.service';
-import { OBJECT_STORAGE, type ObjectStorage } from '../content/object-storage';
+import { OBJECT_STORAGE, type ObjectStorage } from '../blog/object-storage';
 import { auth, type Auth } from './auth';
 import {
   foundWorkspace,

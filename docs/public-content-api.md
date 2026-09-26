@@ -1,8 +1,8 @@
-# Public content API
+# Public blog API
 
-A website reads published posts and pages with a public key. Drafts are never returned. Session routes and API keys are not part of this API.
+A website reads published blog posts, and the categories and tags they are filed under, with a public key. Drafts are never returned. Session routes and API keys are not part of this API.
 
-Base URL: `https://<your-cms-host>/api/v1`
+Base URL: `https://<your-cms-host>/api/v1/public/:orgSlug/blog`
 
 Send the key on every request:
 
@@ -10,39 +10,100 @@ Send the key on every request:
 x-public-key: pub_...
 ```
 
-A missing key, a wrong key, and an unknown organization slug all respond `401`. An unknown slug, or a slug that is still a draft, responds `404`.
+A missing key, a wrong key, and an unknown organization slug all respond `401`. A slug that does not exist, or that belongs to a draft, responds `404`.
 
 Responses from these endpoints send `Cache-Control: public, max-age=60` when they succeed. Browsers on any origin may call them. The preflight allows `GET` and `OPTIONS`, headers `x-public-key` and `Content-Type`, and does not allow credentials.
 
-## List published content
+| Route | Returns |
+| --- | --- |
+| `GET /api/v1/public/:orgSlug/blog/posts` | A page of published posts, newest first |
+| `GET /api/v1/public/:orgSlug/blog/posts/:slug` | One published post with its blocks |
+| `GET /api/v1/public/:orgSlug/blog/categories` | Categories that have a published post |
+| `GET /api/v1/public/:orgSlug/blog/tags` | Tags that have a published post |
 
-`GET /api/v1/public/:orgSlug/content`
+## List published posts
 
-Query: `page` (default 1), `limit` (default 10, max 50), optional `kind` of `post` or `page`.
+`GET /api/v1/public/:orgSlug/blog/posts`
+
+Query:
+
+- `page`: default 1.
+- `limit`: default 10, max 50.
+- `category`: a category slug. Only posts in that category.
+- `tag`: a tag slug. Only posts with that tag.
+
+`category` and `tag` can be sent together, and a post then has to match both. A filter that is not a slug (lowercase letters, digits and single hyphens) responds `400`. A slug that no category or tag has returns an empty page.
+
+```bash
+curl -H "x-public-key: $PUBLIC_KEY" \
+  "https://cms.example.com/api/v1/public/acme/blog/posts?page=1&limit=10"
+```
 
 ```json
 {
   "data": [
     {
-      "kind": "post",
       "title": "Spring openings",
       "slug": "spring-openings",
       "excerpt": "Roles we are hiring for.",
       "publishedAt": "2026-09-24T08:00:00.000Z",
-      "coverImage": null
+      "coverImage": { "url": "https://media.example.com/orgs/org/media/file", "alt": "Our office" },
+      "category": { "name": "News", "slug": "news" },
+      "tags": [
+        { "name": "Careers", "slug": "careers" },
+        { "name": "Hiring", "slug": "hiring" }
+      ]
     }
   ],
   "meta": { "total": 1, "page": 1, "limit": 10, "lastPage": 1 }
 }
 ```
 
-## One published entry
+`category` is `null` for a post without one, and `tags` is `[]` for a post without any. Tags are sorted by name.
 
-`GET /api/v1/public/:orgSlug/content/:slug`
+### Filter by category
+
+Every published post in the `news` category:
+
+```bash
+curl -H "x-public-key: $PUBLIC_KEY" \
+  "https://cms.example.com/api/v1/public/acme/blog/posts?category=news"
+```
+
+### Filter by tag
+
+Every published post tagged `hiring`, twenty to a page:
+
+```bash
+curl -H "x-public-key: $PUBLIC_KEY" \
+  "https://cms.example.com/api/v1/public/acme/blog/posts?tag=hiring&limit=20"
+```
+
+### Both at once
+
+Posts in `news` that are also tagged `hiring`:
+
+```bash
+curl -H "x-public-key: $PUBLIC_KEY" \
+  "https://cms.example.com/api/v1/public/acme/blog/posts?category=news&tag=hiring"
+```
+
+From a browser:
+
+```js
+const response = await fetch(
+  'https://cms.example.com/api/v1/public/acme/blog/posts?tag=hiring',
+  { headers: { 'x-public-key': PUBLIC_KEY } },
+);
+const { data, meta } = await response.json();
+```
+
+## One published post
+
+`GET /api/v1/public/:orgSlug/blog/posts/:slug`
 
 ```json
 {
-  "kind": "post",
   "title": "Spring openings",
   "slug": "spring-openings",
   "excerpt": "Roles we are hiring for.",
@@ -50,6 +111,8 @@ Query: `page` (default 1), `limit` (default 10, max 50), optional `kind` of `pos
   "metaDescription": "Roles we are hiring for.",
   "ogImage": null,
   "coverImage": null,
+  "category": { "name": "News", "slug": "news" },
+  "tags": [{ "name": "Hiring", "slug": "hiring" }],
   "publishedAt": "2026-09-24T08:00:00.000Z",
   "blocks": [
     {
@@ -71,6 +134,8 @@ Query: `page` (default 1), `limit` (default 10, max 50), optional `kind` of `pos
 
 `doc` is ProseMirror JSON. `html` is the sanitized HTML stored with the block. Render `html`. Do not treat `doc` as HTML.
 
+A slug is unique within the organization. A post's slug can change after it is published, so a link to the old slug then answers `404`. The `post.updated` webhook below carries the new slug.
+
 ### Block shapes
 
 `rich_text`
@@ -79,7 +144,7 @@ Query: `page` (default 1), `limit` (default 10, max 50), optional `kind` of `pos
 { "kind": "rich_text", "doc": { "type": "doc", "content": [] }, "html": "<p></p>" }
 ```
 
-`image` — `image` is `null` when the slot is empty.
+`image`: `image` is `null` when the slot is empty.
 
 ```json
 {
@@ -90,7 +155,7 @@ Query: `page` (default 1), `limit` (default 10, max 50), optional `kind` of `pos
 
 `contentType` is `image/jpeg`, `image/png`, `image/webp`, or `image/gif`.
 
-`media_text` — `side` is `image_left` or `image_right`. `heading` is a string or `null`.
+`media_text`: `side` is `image_left` or `image_right`. `heading` is a string or `null`.
 
 ```json
 {
@@ -103,7 +168,7 @@ Query: `page` (default 1), `limit` (default 10, max 50), optional `kind` of `pos
 }
 ```
 
-`heading` — `level` is `1`, `2`, or `3`.
+`heading`: `level` is `1`, `2`, or `3`.
 
 ```json
 { "kind": "heading", "level": 2, "text": "Section" }
@@ -117,17 +182,52 @@ Query: `page` (default 1), `limit` (default 10, max 50), optional `kind` of `pos
 
 Rich text HTML uses only `p`, `blockquote`, `ul`, `ol`, `li`, `br`, `strong`, `em`, and `a` with an `http` or `https` `href`.
 
+## Categories
+
+`GET /api/v1/public/:orgSlug/blog/categories`
+
+Categories with at least one published post, sorted by name. `postCount` counts published posts only. A category that only drafts use is left out, so a name made for an unannounced post does not show before the post does.
+
+```json
+[
+  { "name": "Events", "slug": "events", "postCount": 3 },
+  { "name": "News", "slug": "news", "postCount": 12 }
+]
+```
+
+A post has at most one category. Pass a category's `slug` to the post list as `category`.
+
+## Tags
+
+`GET /api/v1/public/:orgSlug/blog/tags`
+
+Tags on at least one published post, sorted by name, with the same rules as categories.
+
+```json
+[
+  { "name": "Careers", "slug": "careers", "postCount": 2 },
+  { "name": "Hiring", "slug": "hiring", "postCount": 5 }
+]
+```
+
+A post can have any number of tags. Pass a tag's `slug` to the post list as `tag`.
+
 ## Webhooks
 
-When a public key's organization has a webhook URL, the CMS `POST`s that URL after a publish, an unpublish, and an edit of something that is already published. Delivery is not retried. A failed delivery does not roll back the save.
+When the organization has a webhook URL, the CMS `POST`s that URL:
+
+- `post.published` after a post is published.
+- `post.unpublished` after a post is unpublished.
+- `post.updated` after a published post is saved and reads differently, and for each published post whose category or tag is renamed or deleted.
+
+Delivery is not retried. A failed delivery does not roll back the save.
 
 ```json
 {
-  "type": "content.published",
+  "type": "post.published",
   "organizationSlug": "acme",
-  "entry": {
+  "post": {
     "status": "published",
-    "kind": "post",
     "title": "Spring openings",
     "slug": "spring-openings",
     "excerpt": "",
@@ -135,18 +235,20 @@ When a public key's organization has a webhook URL, the CMS `POST`s that URL aft
     "metaDescription": "",
     "ogImage": null,
     "coverImage": null,
+    "category": { "name": "News", "slug": "news" },
+    "tags": [{ "name": "Hiring", "slug": "hiring" }],
     "publishedAt": "2026-09-24T08:00:00.000Z",
     "blocks": []
   }
 }
 ```
 
-`type` is `content.published`, `content.unpublished`, or `content.updated`. An unpublish still includes `slug` and `blocks`, with `status` `draft` and `publishedAt` `null`, so the site can drop the page.
+An unpublish still includes `slug` and `blocks`, with `status` `draft` and `publishedAt` `null`, so the site can drop the page.
 
 The body is the raw JSON above. The request header is:
 
 ```
-X-Content-Signature: sha256=<hex>
+X-Blog-Signature: sha256=<hex>
 ```
 
 `<hex>` is HMAC-SHA256 of that raw body, keyed with the webhook secret. Compare the hex digest you compute with the hex in the header using a timing-safe compare. Reject the request when they differ or when the header is missing.

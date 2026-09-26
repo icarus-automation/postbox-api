@@ -2,7 +2,7 @@ import { BadRequestException, ConflictException, ValidationPipe } from '@nestjs/
 import { mockDeep, mockReset } from 'jest-mock-extended';
 
 import type { PrismaService } from '../../core/database/prisma.service';
-import type { ObjectStorage } from '../content/object-storage';
+import type { ObjectStorage } from '../blog/object-storage';
 import type { Auth } from './auth';
 import { SaveProfileDto } from './workspace.dto';
 import {

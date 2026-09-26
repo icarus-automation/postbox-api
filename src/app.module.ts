@@ -12,19 +12,19 @@ import { PrismaModule } from './core/database/prisma.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { ApiKeysModule } from './modules/api-keys/api-keys.module';
 import { LeadsModule } from './modules/leads/leads.module';
-import { PublicContentCorsModule } from './modules/content/public-content-cors.module';
-import { ContentModule } from './modules/content/content.module';
+import { PublicApiCorsModule } from './modules/blog/public-api-cors.module';
+import { BlogModule } from './modules/blog/blog.module';
 
 @Module({
   imports: [
-    PublicContentCorsModule,
+    PublicApiCorsModule,
     RateLimitModule,
     HealthModule,
     PrismaModule,
     AuthModule,
     ApiKeysModule,
     LeadsModule,
-    ContentModule,
+    BlogModule,
   ],
   controllers: [AppController],
   providers: [
