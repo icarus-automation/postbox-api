@@ -75,6 +75,7 @@ model Organization {
   name             String
   slug             String            @unique
   logo             String?
+  website          String?
   createdAt        DateTime          @map("created_at")
   metadata         String?
   members          Member[]
@@ -82,6 +83,9 @@ model Organization {
   apiKeys          ApiKey[]
   fieldDefinitions FieldDefinition[]
   leads            Lead[]
+  contentEntries   ContentEntry[]
+  media            Media[]
+  contentAccess    ContentAccess?
 
   @@map("organizations")
 }
@@ -224,4 +228,74 @@ model LeadValue {
   @@id([leadId, fieldId])
   @@index([fieldId])
   @@map("lead_values")
+}
+
+enum ContentKind {
+  post
+  page
+
+  @@map("content_kind")
+}
+
+enum ContentStatus {
+  draft
+  published
+
+  @@map("content_status")
+}
+
+model ContentEntry {
+  id              String        @id @default(uuid(7))
+  organizationId  String        @map("organization_id")
+  organization    Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  kind            ContentKind
+  title           String
+  slug            String
+  excerpt         String        @default("")
+  metaTitle       String        @default("") @map("meta_title")
+  metaDescription String        @default("") @map("meta_description")
+  ogImageId       String?       @map("og_image_id")
+  ogImage         Media?        @relation("EntryOgImage", fields: [ogImageId], references: [id], onDelete: Restrict)
+  coverImageId    String?       @map("cover_image_id")
+  coverImage      Media?        @relation("EntryCoverImage", fields: [coverImageId], references: [id], onDelete: Restrict)
+  status          ContentStatus @default(draft)
+  publishedAt     DateTime?     @map("published_at")
+  blocks          Json
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+
+  @@unique([organizationId, slug])
+  @@index([organizationId, status, kind, updatedAt])
+  @@index([organizationId, status, publishedAt])
+  @@map("content_entries")
+}
+
+model Media {
+  id             String         @id @default(uuid(7))
+  organizationId String         @map("organization_id")
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  storageKey     String         @unique @map("storage_key")
+  contentType    String         @map("content_type")
+  byteSize       Int            @map("byte_size")
+  alt            String
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+  ogEntries      ContentEntry[] @relation("EntryOgImage")
+  coverEntries   ContentEntry[] @relation("EntryCoverImage")
+
+  @@index([organizationId])
+  @@map("media")
+}
+
+model ContentAccess {
+  organizationId String       @id @map("organization_id")
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  publicKeyHash  String?      @map("public_key_hash")
+  publicKeyLast4 String?      @map("public_key_last4")
+  webhookUrl     String?      @map("webhook_url")
+  webhookSecret  String?      @map("webhook_secret")
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+
+  @@map("content_access")
 }

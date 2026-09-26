@@ -18,7 +18,7 @@ import {
   organizationAccessControl,
   organizationRoles,
 } from './organization-access';
-import { getUserOrganizationId } from './organization-provisioning';
+import { assertCanonicalSlug, findMembership, rejectDifferentSlug } from './workspace';
 
 const SINGLE_ORGANIZATION_MESSAGE = 'Users can belong to only one organization';
 
@@ -58,9 +58,24 @@ export const auth = betterAuth({
   }),
   emailAndPassword: {
     enabled: true,
+    disableSignUp: true,
     password: {
       hash: hashPassword,
       verify: verifyPasswordHash,
+    },
+  },
+  // Trusted Google alone does not link a local user whose emailVerified is false.
+  account: {
+    accountLinking: {
+      enabled: true,
+      trustedProviders: ['google'],
+      requireLocalEmailVerified: false,
+    },
+  },
+  socialProviders: {
+    google: {
+      clientId: env.GOOGLE_CLIENT_ID,
+      clientSecret: env.GOOGLE_CLIENT_SECRET,
     },
   },
   trustedOrigins: env.CORS_ALLOWED_ORIGINS,
@@ -73,19 +88,16 @@ export const auth = betterAuth({
       joins: true,
     },
   },
-  // OrganizationProvisioningHook adds the user create hook here at module init.
   databaseHooks: {
     session: {
       create: {
         before: async (session) => {
-          const organizationId = await getUserOrganizationId(
-            prisma,
-            session.userId,
-          );
+          const membership = await findMembership(prisma, session.userId);
+          if (!membership) return;
 
-          if (!organizationId) return;
-
-          return { data: { ...session, activeOrganizationId: organizationId } };
+          return {
+            data: { ...session, activeOrganizationId: membership.organizationId },
+          };
         },
       },
     },
@@ -93,11 +105,24 @@ export const auth = betterAuth({
   plugins: [
     organization({
       organizationLimit: 1,
+      allowUserToCreateOrganization: false,
       ac: organizationAccessControl,
       roles: organizationRoles,
+      schema: {
+        organization: {
+          additionalFields: {
+            website: { type: 'string', required: false, input: true },
+          },
+        },
+      },
       organizationHooks: {
-        // The one path that seeds lead system fields, for sign-up provisioning
-        // and for an organization created through the organization API alike.
+        beforeCreateOrganization: ({ organization }) => {
+          assertCanonicalSlug(organization.slug);
+          return Promise.resolve();
+        },
+        beforeUpdateOrganization: async ({ organization, member }) => {
+          await rejectDifferentSlug(prisma, member.organizationId, organization.slug);
+        },
         afterCreateOrganization: async ({ organization }) => {
           await provisionLeadSystemFields(prisma, organization.id);
         },

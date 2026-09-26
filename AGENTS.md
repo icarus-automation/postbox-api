@@ -61,10 +61,10 @@ Record attributes come from organization-scoped field definitions per collection
 - The Better Auth integration guard is global. Mark public Nest routes with `@AllowAnonymous()`.
 - Browser authentication uses HTTP-only session cookies.
 - Users can belong to one organization. Hooks reject extra memberships and `Member.userId` stays unique.
-- Sign-up provisions that organization, named `{user}'s organization`, and every session carries it as `activeOrganizationId`. Clients never call organization create or set-active. See `src/modules/auth/organization-provisioning.ts`.
-- Better Auth creates the organization and its owner membership. Application code only chooses the name and slug and backfills the session. `afterCreateOrganization` is the one path that seeds lead system fields.
-- `OrganizationProvisioningHook` registers the sign-up hook, and the Nest integration only wires it when the application starts. Anything calling `auth.api.signUpEmail` outside a running Nest app, the seed included, must boot an application context first or it creates a user with no organization.
-- Better Auth runs `user.create.after` only once the sign-up transaction commits, which is after the sign-up session row exists. Provisioning backfills that session instead of assuming hook order.
+- Email and password sign-up is disabled. Sign-in still accepts email and password. New accounts use Google. A Google login links to an existing user with the same email (`trustedProviders: ['google']`, `requireLocalEmailVerified: false`).
+- A new user has no organization. They found one through `POST /api/v1/workspaces`. That call uses `auth.api.createOrganization` with `userId` and no headers, because `allowUserToCreateOrganization` is false. The creator is owner. `afterCreateOrganization` still seeds lead system fields.
+- Admission comes from the member row, not from `activeOrganizationId`. No member means onboarding. `readAdmission` repairs the session cache when it disagrees with that row.
+- The workspace slug is chosen once. `beforeUpdateOrganization` rejects a different slug. The Nest save body has no slug field.
 - There is no users module. Member reads come from Better Auth's `/api/v1/auth/organization/list-members` and `get-full-organization`.
 - Organization-scoped controllers require `@OrgRoles()` or `@MemberHasPermission()`.
 - Scope every tenant query by the authenticated session's `activeOrganizationId`.

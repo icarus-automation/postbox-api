@@ -7,7 +7,7 @@ This directory is the maintained source for verifying the user-facing HTTP behav
 - Launch with `node .cursor/skills/verify-cms-api/scripts/launch.mjs` so the API is at `http://127.0.0.1:18000` against database `cms_api_verify`.
 - Run `node .cursor/skills/verify-cms-api/scripts/doctor.mjs` and require `status: "ok"`, `Hello World!`, and database `up`.
 - Never drive an instance that was not started by this verification run. A developer server on port 8000 is off-limits.
-- Disposable owner credentials live in `.cursor/skills/verify-cms-api/run/account.json`. Do not use the Prisma seed owner.
+- Disposable owner credentials live in `.cursor/skills/verify-cms-api/run/account.json`. There is no Prisma seed owner. Email sign-up is disabled. The sign-up recipe provisions a password fixture, then creates the workspace over HTTP.
 - Start every recipe from this baseline unless its preconditions say otherwise (most mutations need the owner signed in first).
 
 ## Driving conventions
@@ -40,7 +40,7 @@ Keep implementation details out of the map. Name only user paths, stable handles
 
 ## Features
 
-- [Sign up and session](./sign-up-and-session.md) covers email sign-up, the provisioned personal organization, session cookies, and sign-in.
+- [Sign up and session](./sign-up-and-session.md) covers disabled email sign-up, a user with no organization, workspace creation, session cookies, and sign-in.
 - [API keys](./api-keys.md) covers minting, listing without the raw secret, using `x-api-key`, and revoke.
 - [Lead ingest](./lead-ingest.md) covers machine create, field lookup for dedupe, and the keys an agent is refused.
 - [Lead inbox](./lead-inbox.md) covers session list, status, value edits, archive, and restore.

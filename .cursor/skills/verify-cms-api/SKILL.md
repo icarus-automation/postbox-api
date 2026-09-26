@@ -83,7 +83,7 @@ Stable handles are route paths, status codes, and JSON keys. There are no ARIA r
 
 Browser-session routes need the cookie jar (default). Machine routes that use `ApiKeyGuard` need `--api-key` or `--api-key-from`, plus `@AllowAnonymous()` on the Nest handler so the session guard steps aside. Routes that are session-only ignore `x-api-key` and return 401 without a cookie.
 
-Do not call `POST /api/v1/auth/organization/create` or `POST /api/v1/auth/organization/set-active`. Sign-up provisions the organization and backfills `activeOrganizationId`.
+Do not call `POST /api/v1/auth/organization/create` or `POST /api/v1/auth/organization/set-active`. Email sign-up is disabled. A signed-in user with no organization creates one with `POST /api/v1/workspaces`, which backfills `activeOrganizationId`.
 
 Read `features/README.md` and the matching feature file before driving. A proof that uses one convenient entry point is incomplete when that file lists others.
 
@@ -95,7 +95,7 @@ Proof standards:
 
 - Exercise the public `/api/v1` path a client or machine would call. Do not prove a write by poking Prisma, seed SQL, or an internal setter.
 - Capture the mutating request and a second read of the resulting state (for example POST lead, then GET by id, then GET the list).
-- Confirm side effects the body cannot fake: sign-up must show `session.activeOrganizationId`; a minted key must actually authorize `GET /api/v1/leads`; archiving must empty the inbox and fill `GET /api/v1/leads?archived=true`.
+- Confirm side effects the body cannot fake: email sign-up must be rejected, and only `POST /api/v1/workspaces` sets `session.activeOrganizationId`; a minted key must actually authorize `GET /api/v1/leads`; archiving must empty the inbox and fill `GET /api/v1/leads?archived=true`.
 - Never log or leave a raw API key, session token, or password in `artifacts/`. Keep working secrets in `run/` (gitignored). Redact `key`, `token`, and `password`.
 - `pnpm test` / `pnpm test:e2e` are not evidence for this skill.
 
