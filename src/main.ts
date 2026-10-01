@@ -1,5 +1,6 @@
 import { NestFactory } from '@nestjs/core';
 import { VersioningType } from '@nestjs/common';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 
 import helmet from 'helmet';
 
@@ -7,9 +8,12 @@ import { AppModule } from './app.module';
 import { env } from './core/config/env.config';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule, {
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     bodyParser: false,
   });
+
+  // Caddy is the one proxy hop in front of the API. It lets the throttler see the caller's IP.
+  app.set('trust proxy', 1);
 
   app.setGlobalPrefix('api');
   app.enableVersioning({

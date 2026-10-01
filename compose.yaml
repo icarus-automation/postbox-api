@@ -1,0 +1,44 @@
+name: postbox-prod
+
+services:
+  migrate:
+    image: ghcr.io/icarus-automation/cms-api:latest
+    container_name: postbox-prod-migrate
+    command: ["pnpm", "exec", "prisma", "migrate", "deploy"]
+    env_file: .env
+    restart: "no"
+    networks:
+      - shared-network
+
+  api:
+    image: ghcr.io/icarus-automation/cms-api:latest
+    container_name: postbox-prod-api
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:' + (process.env.PORT || 8000) + '/api/v1/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - proxy
+      - shared-network
+
+networks:
+  proxy:
+    external: true
+  shared-network:
+    external: true

@@ -1,0 +1,15 @@
+.git
+.github
+.claude
+.cursor
+node_modules
+dist
+coverage
+.env
+.env.*
+docs
+test
+compose.yaml
+Dockerfile
+.dockerignore
+*.md
