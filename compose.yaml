@@ -4,7 +4,7 @@ services:
   migrate:
     image: ghcr.io/icarus-automation/cms-api:latest
     container_name: postbox-prod-migrate
-    command: ["pnpm", "exec", "prisma", "migrate", "deploy"]
+    command: ["node", "node_modules/prisma/build/index.js", "migrate", "deploy"]
     env_file: .env
     restart: "no"
     networks:

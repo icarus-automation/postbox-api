@@ -61,7 +61,7 @@ docker compose logs --tail=100 migrate api
 The `migrate` container runs this automatically before the API starts:
 
 ```bash
-pnpm exec prisma migrate deploy
+node node_modules/prisma/build/index.js migrate deploy
 ```
 
 ## 6. Caddy

@@ -106,7 +106,7 @@ Record attributes come from organization-scoped field definitions per collection
 
 - `compose.yaml` is the prod stack. It is copied as is to `~/docker-apps/postbox/prod` on the VPS and has no Postgres. The database is `postbox` on the shared Postgres, reached over the external `shared-network`. Caddy reaches `postbox-prod-api` over the external `proxy` network.
 - CI (`.github/workflows/publish-image.yml`) only builds and pushes `ghcr.io/icarus-automation/cms-api` as `latest` and `sha-<12-character-commit>`. A deploy is a manual `docker compose pull` and `docker compose up -d`.
-- The `migrate` service runs `prisma migrate deploy` before `api` starts. That is why `prisma` is a runtime dependency. Keep it there.
+- The `migrate` service runs `prisma migrate deploy` before `api` starts. That is why `prisma` is a runtime dependency. Keep it there. It calls the Prisma CLI with `node` directly, never `pnpm exec`: pnpm 12 reinstalls first, and as user `node` that fails on root-owned `node_modules`.
 - The image build runs `prisma generate` with a dummy `DATABASE_URL`, because `prisma.config.ts` fails without one.
 - `main.ts` sets `trust proxy` to 1 for the one Caddy hop, so the throttler sees caller IPs. Cloudflare must stay DNS only for the API host, or the hop count is wrong.
 - `docs/deployment.md` is the runbook. Keep it true when compose, hosts or env change.
