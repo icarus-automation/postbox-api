@@ -14,6 +14,7 @@ import {
   API_KEY_PREFIX,
   API_KEY_START_LENGTH,
 } from './api-key-config';
+import { cookieSettings, sharedCookieDomain } from './cookie-config';
 import {
   organizationAccessControl,
   organizationRoles,
@@ -56,9 +57,9 @@ export const auth = betterAuth({
   database: prismaAdapter(prisma, {
     provider: 'postgresql',
   }),
+  // Sign-up signs the new user in. Nothing sends email, so there is no verification.
   emailAndPassword: {
     enabled: true,
-    disableSignUp: true,
     password: {
       hash: hashPassword,
       verify: verifyPasswordHash,
@@ -78,12 +79,14 @@ export const auth = betterAuth({
       clientSecret: env.GOOGLE_CLIENT_SECRET,
     },
   },
+  // Every CORS origin is a trusted callback, so Google can send people back to the client.
   trustedOrigins: env.CORS_ALLOWED_ORIGINS,
   rateLimit: {
     enabled: true,
     storage: 'database',
   },
   advanced: {
+    ...cookieSettings(sharedCookieDomain(env.BETTER_AUTH_URL, env.COOKIE_DOMAIN)),
     database: {
       joins: true,
     },

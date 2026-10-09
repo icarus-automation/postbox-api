@@ -34,6 +34,21 @@ nano .env           # paste .env from this repo
 chmod 600 .env
 ```
 
+The prod `.env` has these auth values. `COOKIE_DOMAIN` scopes the session cookie to both hosts,
+with `Secure` and `SameSite=Lax`:
+
+```dotenv
+BETTER_AUTH_URL=https://postbox-api.geoplanph.com
+CORS_ALLOWED_ORIGINS=https://postbox.geoplanph.com
+COOKIE_DOMAIN=geoplanph.com
+```
+
+On a running install, edit `.env` and run `docker compose up -d --force-recreate`. A browser that
+signed in before `COOKIE_DOMAIN` was set keeps an older cookie for `postbox-api.geoplanph.com` alone,
+and sends it ahead of the new one. Once its session is gone, sign-in keeps returning to the login
+page. Clear the cookies for `postbox-api.geoplanph.com` once in that browser. A database reset does
+not remove them.
+
 The Google prod client needs origin `https://postbox.geoplanph.com` and redirect URI
 `https://postbox-api.geoplanph.com/api/v1/auth/callback/google`. The R2 bucket CORS rule needs origin
 `https://postbox.geoplanph.com`, method `PUT`, and headers `content-type` and `content-length`. Leave
@@ -66,14 +81,56 @@ node node_modules/prisma/build/index.js migrate deploy
 
 ## 6. Caddy
 
-Mount the sites folder in `~/self-hosted/caddy/compose.yaml`, under the `caddy` service `volumes`.
-Without it `import sites/*` loads nothing:
+Two files change in `~/self-hosted/caddy`:
 
-```yaml
-      - ./sites:/etc/caddy/sites:ro
+```bash
+cd ~/self-hosted/caddy
+nano compose.yaml          # add one line, see 6a
+nano sites/postbox.caddy   # replace the whole file, see 6b
 ```
 
-Replace `~/self-hosted/caddy/sites/postbox.caddy`:
+**6a. `compose.yaml`:** delete everything in the file and paste this. The only new line is
+`./sites`. Without it, `import sites/*` loads nothing.
+
+```yaml
+name: proxy
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    container_name: caddy
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      N8N_HOST: ${N8N_HOST}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./sites:/etc/caddy/sites:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - proxy
+
+volumes:
+  caddy_data:
+    external: true
+    name: n8n_caddy_data
+  caddy_config:
+    external: true
+    name: n8n_caddy_config
+
+networks:
+  proxy:
+    external: true
+    name: proxy
+```
+
+**6b. `sites/postbox.caddy`:** delete everything in the file and paste:
 
 ```caddyfile
 postbox-api.geoplanph.com {
@@ -85,7 +142,7 @@ postbox-api.geoplanph.com {
 Recreate Caddy (every site drops for a few seconds) and test:
 
 ```bash
-cd ~/self-hosted/caddy
+docker compose config
 docker compose up -d
 curl -i https://postbox-api.geoplanph.com/api/v1/health
 ```

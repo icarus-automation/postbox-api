@@ -18,10 +18,7 @@ describe('google account linking', () => {
       baseURL: 'http://localhost:8000',
       secret: 'test-secret-that-is-at-least-32-chars',
       database: memoryAdapter(memory),
-      emailAndPassword: {
-        enabled: production.options.emailAndPassword?.enabled ?? false,
-        disableSignUp: production.options.emailAndPassword?.disableSignUp,
-      },
+      emailAndPassword: production.options.emailAndPassword,
       account: {
         accountLinking: production.options.account?.accountLinking,
       },
@@ -102,10 +99,7 @@ describe('google account linking', () => {
       baseURL: 'http://localhost:8000',
       secret: 'test-secret-that-is-at-least-32-chars',
       database: memoryAdapter(memory),
-      emailAndPassword: {
-        enabled: production.options.emailAndPassword?.enabled ?? false,
-        disableSignUp: production.options.emailAndPassword?.disableSignUp,
-      },
+      emailAndPassword: production.options.emailAndPassword,
       account: {
         accountLinking: production.options.account?.accountLinking,
       },

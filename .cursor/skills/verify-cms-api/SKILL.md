@@ -83,7 +83,7 @@ Stable handles are route paths, status codes, and JSON keys. There are no ARIA r
 
 Browser-session routes need the cookie jar (default). Machine routes that use `ApiKeyGuard` need `--api-key` or `--api-key-from`, plus `@AllowAnonymous()` on the Nest handler so the session guard steps aside. Routes that are session-only ignore `x-api-key` and return 401 without a cookie.
 
-Do not call `POST /api/v1/auth/organization/create` or `POST /api/v1/auth/organization/set-active`. Email sign-up is disabled. A signed-in user with no organization creates one with `POST /api/v1/workspaces`, which backfills `activeOrganizationId`.
+Do not call `POST /api/v1/auth/organization/create` or `POST /api/v1/auth/organization/set-active`. Email sign-up leaves the new user with no organization. A signed-in user with no organization creates one with `POST /api/v1/workspaces`, which backfills `activeOrganizationId`.
 
 Read `features/README.md` and the matching feature file before driving. A proof that uses one convenient entry point is incomplete when that file lists others.
 

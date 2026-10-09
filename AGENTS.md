@@ -62,8 +62,10 @@ Record attributes come from organization-scoped field definitions per collection
 - Better Auth owns email and password authentication under `/api/v1/auth`.
 - The Better Auth integration guard is global. Mark public Nest routes with `@AllowAnonymous()`.
 - Browser authentication uses HTTP-only session cookies.
+- `COOKIE_DOMAIN` scopes Better Auth cookies to a parent domain, with Secure and SameSite=Lax, so a client and this API on sibling subdomains share the session. `sharedCookieDomain` in `src/modules/auth/cookie-config.ts` applies it only when `BETTER_AUTH_URL` is https and its host is inside that domain. Otherwise cookies stay host-only, which is what localhost needs, and `main.ts` logs a warning when the value is set but unused.
+- Better Auth `trustedOrigins` is `CORS_ALLOWED_ORIGINS`, so the client origin is a valid Google `callbackURL` and `errorCallbackURL`. Keep the two lists the same.
 - Users can belong to one organization. Hooks reject extra memberships and `Member.userId` stays unique.
-- Email and password sign-up is disabled. Sign-in still accepts email and password. New accounts use Google. A Google login links to an existing user with the same email (`trustedProviders: ['google']`, `requireLocalEmailVerified: false`).
+- Email and password sign-up is open beside Google, and it signs the new user in. Nothing sends email, so there is no email verification. A Google login links to an existing user with the same email (`trustedProviders: ['google']`, `requireLocalEmailVerified: false`).
 - A new user has no organization. They found one through `POST /api/v1/workspaces`. That call uses `auth.api.createOrganization` with `userId` and no headers, because `allowUserToCreateOrganization` is false. The creator is owner. `afterCreateOrganization` still seeds lead system fields.
 - Admission comes from the member row, not from `activeOrganizationId`. No member means onboarding. `readAdmission` repairs the session cache when it disagrees with that row.
 - The workspace slug is chosen once. `beforeUpdateOrganization` rejects a different slug. The Nest save body has no slug field.

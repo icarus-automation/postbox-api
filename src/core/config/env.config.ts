@@ -19,6 +19,8 @@ const schema = z.object({
 
   BETTER_AUTH_SECRET: z.string().min(32),
   BETTER_AUTH_URL: z.url(),
+  // Parent domain shared by the client and the API. Unset keeps host-only cookies.
+  COOKIE_DOMAIN: optionalEnv,
   GOOGLE_CLIENT_ID: z.string().min(1),
   GOOGLE_CLIENT_SECRET: z.string().min(1),
   // A label shown in front of the workspace slug. Not a URL, and a trailing slash stays.

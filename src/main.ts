@@ -1,11 +1,12 @@
 import { NestFactory } from '@nestjs/core';
-import { VersioningType } from '@nestjs/common';
+import { Logger, VersioningType } from '@nestjs/common';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 
 import helmet from 'helmet';
 
 import { AppModule } from './app.module';
 import { env } from './core/config/env.config';
+import { sharedCookieDomain } from './modules/auth/cookie-config';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
@@ -30,6 +31,12 @@ async function bootstrap() {
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
   });
+
+  if (env.COOKIE_DOMAIN && !sharedCookieDomain(env.BETTER_AUTH_URL, env.COOKIE_DOMAIN)) {
+    new Logger('Bootstrap').warn(
+      `COOKIE_DOMAIN ${env.COOKIE_DOMAIN} does not cover ${env.BETTER_AUTH_URL} over https, so auth cookies stay host-only.`,
+    );
+  }
 
   await app.listen(env.PORT, '0.0.0.0');
 }

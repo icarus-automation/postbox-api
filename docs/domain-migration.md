@@ -8,6 +8,7 @@ Moving off `geoplanph.com` to your own domain. No rebuild, no image change, no d
 |---|---|---|
 | VPS `.env` | `BETTER_AUTH_URL` | `https://<api-host>` |
 | VPS `.env` | `CORS_ALLOWED_ORIGINS` | `https://<frontend-host>` |
+| VPS `.env` | `COOKIE_DOMAIN` | the domain both hosts sit under, such as `example.com` |
 | VPS `.env` | `WORKSPACE_URL_PREFIX` | `<frontend-host>/` |
 | Caddy `sites/postbox.caddy` | site address | `<api-host>` |
 | Cloudflare | A record, DNS only | `<api-host>` to `187.77.156.189` |
@@ -20,7 +21,7 @@ Unchanged: image, compose, container names, database, API keys, webhook URLs, wo
 
 ## Impact
 
-- Everyone signs in again. Session cookies are host-only, so the old cookie never reaches the new host.
+- Everyone signs in again. Session cookies are scoped to `COOKIE_DOMAIN`, so the old cookie never reaches the new domain.
 - Machine callers and every website reading `/api/v1/public/...` fail until their base URL is updated. API keys keep working.
 - With no redirects, the old hosts stop answering when step 6 runs.
 
@@ -30,7 +31,7 @@ Unchanged: image, compose, container names, database, API keys, webhook URLs, wo
 2. Add DNS records: `<api-host>` A to `187.77.156.189`, **DNS only**, plus the frontend's record. Wait until `dig <api-host>` returns the VPS IP. Caddy needs it to issue the certificate.
 3. Google Cloud, prod OAuth client: add the new origin and redirect URI, and add the new domain under the consent screen's authorized domains. Keep the old entries until step 9.
 4. R2: add `https://<frontend-host>` to the bucket CORS rule. Keep the old origin until step 9.
-5. VPS `.env`: set the three values above. Keep the old frontend origin in `CORS_ALLOWED_ORIGINS` (comma separated) until step 7 is done. Then:
+5. VPS `.env`: set the four values above. Keep the old frontend origin in `CORS_ALLOWED_ORIGINS` (comma separated) until step 7 is done. Then:
 
 ```bash
 cd ~/docker-apps/postbox/prod

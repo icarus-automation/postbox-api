@@ -7,7 +7,7 @@ This directory is the maintained source for verifying the user-facing HTTP behav
 - Launch with `node .cursor/skills/verify-cms-api/scripts/launch.mjs` so the API is at `http://127.0.0.1:18000` against database `cms_api_verify`.
 - Run `node .cursor/skills/verify-cms-api/scripts/doctor.mjs` and require `status: "ok"`, `Hello World!`, and database `up`.
 - Never drive an instance that was not started by this verification run. A developer server on port 8000 is off-limits.
-- Disposable owner credentials live in `.cursor/skills/verify-cms-api/run/account.json`. There is no Prisma seed owner. Email sign-up is disabled. The sign-up recipe provisions a password fixture, then creates the workspace over HTTP.
+- Disposable owner credentials live in `.cursor/skills/verify-cms-api/run/account.json`. There is no Prisma seed owner. The sign-up recipe signs that account up over HTTP, then creates the workspace.
 - Start every recipe from this baseline unless its preconditions say otherwise (most mutations need the owner signed in first).
 
 ## Driving conventions
