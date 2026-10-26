@@ -68,7 +68,6 @@ describe('PostsController', () => {
     expect(optional(PostsController.prototype.publishPost)).toBeUndefined();
     expect(optional(PostsController.prototype.unpublishPost)).toBeUndefined();
     expect(optional(PostsController.prototype.savePost)).toBeUndefined();
-    expect(optional(BlogAccessController.prototype.rotatePublicKey)).toBeUndefined();
     expect(optional(BlogAccessController.prototype.getBlogAccess)).toBeUndefined();
     expect(optional(BlogAccessController.prototype.setWebhook)).toBeUndefined();
     expect(optional(PostsController.prototype.createPost)).toBe(true);

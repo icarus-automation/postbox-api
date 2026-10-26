@@ -13,3 +13,29 @@ const OPTIONS: sanitize.IOptions = {
 export function sanitizeHtml(dirty: string): SanitizedHtml {
   return sanitize(dirty, OPTIONS) as SanitizedHtml;
 }
+
+// The whole post: the rich text above plus what the block wrappers add. A class
+// survives only when it starts with pb-, so a stray class or style never reaches a site.
+const POST_OPTIONS: sanitize.IOptions = {
+  allowedTags: [
+    ...(OPTIONS.allowedTags as string[]),
+    'h1',
+    'h2',
+    'h3',
+    'div',
+    'figure',
+    'img',
+    'hr',
+  ],
+  allowedAttributes: { a: ['href'], img: ['src', 'alt', 'loading'] },
+  allowedClasses: { '*': ['pb-*'] },
+  allowedSchemes: ['http', 'https'],
+  allowProtocolRelative: false,
+  disallowedTagsMode: 'discard',
+  // An image whose address was refused has nothing left to show.
+  exclusiveFilter: (frame) => frame.tag === 'img' && !frame.attribs.src,
+};
+
+export function sanitizePostHtml(dirty: string): SanitizedHtml {
+  return sanitize(dirty, POST_OPTIONS) as SanitizedHtml;
+}

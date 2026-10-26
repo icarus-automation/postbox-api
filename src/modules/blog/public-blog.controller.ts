@@ -10,21 +10,21 @@ import {
 import { AllowAnonymous } from '@thallesp/nestjs-better-auth';
 
 import type { PaginatedResponse } from '../../common/responses/paginated-api.response';
+import { CurrentOrganizationId } from '../api-keys/decorators/current-organization-id.decorator';
+import { IntegrationKeyGuard } from '../integration/integration-key.guard';
 import { CategoriesService } from './categories.service';
-import { PublicOrganizationId } from './decorators/public-organization-id.decorator';
 import type {
   PublicPost,
   PublishedPostSummary,
   PublishedTerm,
 } from './document/blog.types';
 import { FilterPublishedPostsDTO } from './dto/filter-published-posts.dto';
-import { PublicReadKeyGuard } from './guards/public-read-key.guard';
 import { PostsService } from './posts.service';
 import { PublicBlogInterceptor } from './public-blog.interceptor';
 import { TagsService } from './tags.service';
 
 @AllowAnonymous()
-@UseGuards(PublicReadKeyGuard)
+@UseGuards(IntegrationKeyGuard)
 @UseInterceptors(PublicBlogInterceptor)
 @Controller('public/:orgSlug/blog')
 export class PublicBlogController {
@@ -37,7 +37,7 @@ export class PublicBlogController {
   @Get('posts')
   getPublishedPosts(
     @Query() query: FilterPublishedPostsDTO,
-    @PublicOrganizationId() organizationId: string,
+    @CurrentOrganizationId() organizationId: string,
   ): Promise<PaginatedResponse<PublishedPostSummary>> {
     return this.posts.getPublishedPosts(organizationId, query);
   }
@@ -45,7 +45,7 @@ export class PublicBlogController {
   @Get('posts/:slug')
   async getPublishedPost(
     @Param('slug') slug: string,
-    @PublicOrganizationId() organizationId: string,
+    @CurrentOrganizationId() organizationId: string,
   ): Promise<PublicPost> {
     const post = await this.posts.getPublishedPost(organizationId, slug);
     if (!post) throw new NotFoundException('Post not found');
@@ -54,13 +54,13 @@ export class PublicBlogController {
 
   @Get('categories')
   getPublishedCategories(
-    @PublicOrganizationId() organizationId: string,
+    @CurrentOrganizationId() organizationId: string,
   ): Promise<PublishedTerm[]> {
     return this.categories.getPublishedCategories(organizationId);
   }
 
   @Get('tags')
-  getPublishedTags(@PublicOrganizationId() organizationId: string): Promise<PublishedTerm[]> {
+  getPublishedTags(@CurrentOrganizationId() organizationId: string): Promise<PublishedTerm[]> {
     return this.tags.getPublishedTags(organizationId);
   }
 }

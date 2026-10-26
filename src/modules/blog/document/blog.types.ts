@@ -132,6 +132,9 @@ export type PublicPost = {
   tags: PublicTerm[];
   publishedAt: string;
   blocks: PublicBlock[];
+  // The blocks above rendered as one sanitized string with stable pb-* classes.
+  // A site renders either this or the blocks.
+  html: SanitizedHtml;
 };
 
 export type PublishedPostSummary = {

@@ -7,6 +7,7 @@ import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { env } from './core/config/env.config';
 import { sharedCookieDomain } from './modules/auth/cookie-config';
+import { publicApiCors } from './modules/blog/public-api-cors';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
@@ -24,6 +25,10 @@ async function bootstrap() {
   app.enableShutdownHooks();
 
   app.use(helmet());
+
+  // Before enableCors, which answers every preflight itself and would otherwise end
+  // the ones for /public with no origin allowed.
+  app.use(publicApiCors);
 
   app.enableCors({
     origin: env.CORS_ALLOWED_ORIGINS,

@@ -122,7 +122,7 @@ export function parseProseDoc(raw: unknown): ProseDoc {
   return { type: 'doc', content: raw.content.map(parseBlock) };
 }
 
-function escapeText(value: string): string {
+export function escapeText(value: string): string {
   return value
     .replaceAll('&', '&amp;')
     .replaceAll('<', '&lt;')

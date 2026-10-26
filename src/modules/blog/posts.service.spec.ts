@@ -57,6 +57,45 @@ function afterWrite(
   };
 }
 
+const PHOTO = {
+  id: 'media-1',
+  url: 'https://media.example.com/team.png',
+  alt: 'The team',
+  contentType: 'image/png',
+};
+
+const PARAGRAPH = {
+  type: 'doc',
+  content: [{ type: 'paragraph', content: [{ type: 'text', text: 'We are hiring.' }] }],
+};
+
+// A stored post body with one of every block kind.
+const EVERY_BLOCK = [
+  { id: 'block-1', kind: 'heading', level: 2, text: 'Open roles' },
+  { id: 'block-2', kind: 'rich_text', doc: PARAGRAPH, html: '<p>We are hiring.</p>' },
+  { id: 'block-3', kind: 'image', image: { media: PHOTO } },
+  {
+    id: 'block-4',
+    kind: 'media_text',
+    side: 'image_right',
+    image: { media: PHOTO },
+    heading: 'Why join us',
+    doc: PARAGRAPH,
+    html: '<p>We are hiring.</p>',
+  },
+  { id: 'block-5', kind: 'divider' },
+];
+
+const EVERY_CLASS = [
+  'pb-heading',
+  'pb-rich-text',
+  'pb-image',
+  'pb-media-text',
+  'pb-media-text__body',
+  'pb-media-text__media',
+  'pb-divider',
+];
+
 function uniqueSlugViolation() {
   return new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
     code: 'P2002',
@@ -373,6 +412,20 @@ describe('PostsService', () => {
       expect(webhooks.deliver).not.toHaveBeenCalled();
     });
 
+    it('sends the rendered html with the post it announces', async () => {
+      findFirst.mockResolvedValueOnce(storedPost({ blocks: EVERY_BLOCK }) as never);
+      update.mockResolvedValue(
+        storedPost({ status: 'published', publishedAt, blocks: EVERY_BLOCK }) as never,
+      );
+
+      await service.publishPost('organization-a', 'post-1', publishedAt);
+      await flush();
+
+      const event = webhooks.deliver.mock.calls[0]?.[0];
+      expect(event?.post.blocks).toHaveLength(5);
+      for (const name of EVERY_CLASS) expect(event?.post.html).toContain(name);
+    });
+
     it('does not reject publish when the webhook throws', async () => {
       findFirst.mockResolvedValue(storedPost() as never);
       update.mockResolvedValue(storedPost({ status: 'published', publishedAt }) as never);
@@ -430,6 +483,54 @@ describe('PostsService', () => {
   });
 
   describe('public reads', () => {
+    it('returns the ordered blocks and the whole post rendered to html', async () => {
+      findFirst.mockResolvedValue(
+        storedPost({ status: 'published', publishedAt, blocks: EVERY_BLOCK }) as never,
+      );
+
+      const post = await service.getPublishedPost('organization-a', 'spring-openings');
+
+      expect(post?.blocks.map((block) => block.kind)).toEqual([
+        'heading',
+        'rich_text',
+        'image',
+        'media_text',
+        'divider',
+      ]);
+      const html = post?.html ?? '';
+      for (const name of EVERY_CLASS) expect(html).toContain(name);
+      const order = ['pb-heading', 'pb-rich-text', 'pb-image', 'pb-media-text ', 'pb-divider'];
+      const positions = order.map((name) => html.indexOf(`class="${name.trim()}`));
+      expect(positions).toEqual([...positions].sort((a, b) => a - b));
+      expect(positions).not.toContain(-1);
+      expect(html).toContain('<img src="https://media.example.com/team.png" alt="The team"');
+    });
+
+    it('renders only the body, not the title or the cover image', async () => {
+      findFirst.mockResolvedValue(
+        storedPost({
+          status: 'published',
+          publishedAt,
+          title: 'A very particular title',
+          blocks: [{ id: 'block-1', kind: 'divider' }],
+        }) as never,
+      );
+
+      const post = await service.getPublishedPost('organization-a', 'spring-openings');
+
+      expect(post?.html).toBe('<hr class="pb-divider" />');
+    });
+
+    it('gives a post with no blocks an empty html', async () => {
+      findFirst.mockResolvedValue(
+        storedPost({ status: 'published', publishedAt, blocks: [] }) as never,
+      );
+
+      const post = await service.getPublishedPost('organization-a', 'spring-openings');
+
+      expect(post).toMatchObject({ blocks: [], html: '' });
+    });
+
     it('returns null for a draft slug', async () => {
       findFirst.mockResolvedValue(null);
 

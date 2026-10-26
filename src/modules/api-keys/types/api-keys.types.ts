@@ -1,6 +1,7 @@
 import type { Request } from 'express';
 
 import type { OrganizationSession } from '../../auth/types/auth.types';
+import type { IntegrationKeyPrincipal } from '../../integration/types/integration-key.types';
 
 // The key row as the Better Auth API key plugin returns it, narrowed to what
 // this module reads. `key` is the digest and never leaves the plugin.
@@ -37,6 +38,7 @@ export type ApiKeyPrincipal = {
 
 export type ApiKeyRequest = Request & {
   apiKey?: ApiKeyPrincipal;
+  integrationKey?: IntegrationKeyPrincipal;
 };
 
 // Past SessionOrApiKeyGuard, exactly one of session and apiKey is set.

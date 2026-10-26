@@ -1,5 +1,3 @@
-import { createHash } from 'node:crypto';
-
 import { INestApplication, VersioningType } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { FieldType } from '@prisma/client';
@@ -35,8 +33,7 @@ const leadFields = [
   },
 ];
 
-const PUBLIC_KEY = 'pub_e2e-key';
-const PUBLIC_KEY_HASH = createHash('sha256').update(PUBLIC_KEY).digest('hex');
+const INTEGRATION_KEY = 'pbi_e2e-key';
 
 // Better Auth owns key verification now, and it reads through its own Prisma
 // client rather than the injected one, so the key seam for these tests is the
@@ -48,8 +45,7 @@ describe('Application authentication (e2e)', () => {
   const leadCount = jest.fn();
   const leadFindMany = jest.fn();
   const leadFindFirst = jest.fn();
-  const organizationFindUnique = jest.fn();
-  const blogAccessFindUnique = jest.fn();
+  const integrationKeyFindFirst = jest.fn();
   const postCount = jest.fn();
   const postFindMany = jest.fn();
   const postFindFirst = jest.fn();
@@ -72,8 +68,7 @@ describe('Application authentication (e2e)', () => {
           findMany: leadFindMany,
           findFirst: leadFindFirst,
         },
-        organization: { findUnique: organizationFindUnique },
-        blogAccess: { findUnique: blogAccessFindUnique },
+        integrationKey: { findFirst: integrationKeyFindFirst },
         post: {
           count: postCount,
           findMany: postFindMany,
@@ -113,10 +108,17 @@ describe('Application authentication (e2e)', () => {
     leadFindMany.mockReset();
     leadFindMany.mockResolvedValue([]);
     leadFindFirst.mockReset();
-    organizationFindUnique.mockReset();
-    organizationFindUnique.mockResolvedValue({ id: 'organization-a', slug: 'acme' });
-    blogAccessFindUnique.mockReset();
-    blogAccessFindUnique.mockResolvedValue({ publicKeyHash: PUBLIC_KEY_HASH });
+    // Holds INTEGRATION_KEY for the organization with the slug acme and no other key.
+    integrationKeyFindFirst.mockReset();
+    integrationKeyFindFirst.mockImplementation(
+      ({ where }: { where: { key: string; organization?: { slug: string } } }) =>
+        Promise.resolve(
+          where.key === INTEGRATION_KEY &&
+            (where.organization === undefined || where.organization.slug === 'acme')
+            ? { organizationId: 'organization-a' }
+            : null,
+        ),
+    );
     postCount.mockReset();
     postCount.mockResolvedValue(0);
     postFindMany.mockReset();
@@ -433,18 +435,36 @@ describe('Application authentication (e2e)', () => {
       await request(app.getHttpServer()).get('/api/v1/content').expect(404);
       await request(app.getHttpServer())
         .get('/api/v1/public/acme/content')
-        .set('x-public-key', PUBLIC_KEY)
+        .set('x-integration-key', INTEGRATION_KEY)
         .expect(404);
     });
 
-    it('refuses the public blog without the public key', async () => {
+    it('refuses the public blog without the integration key', async () => {
       await request(app.getHttpServer()).get('/api/v1/public/acme/blog/posts').expect(401);
       await request(app.getHttpServer())
         .get('/api/v1/public/acme/blog/posts')
-        .set('x-public-key', 'pub_wrong')
+        .set('x-integration-key', 'pbi_wrong')
         .expect(401);
 
       expect(postFindMany).not.toHaveBeenCalled();
+    });
+
+    it('refuses the key of another organization, an admin API key, and the old header', async () => {
+      await request(app.getHttpServer())
+        .get('/api/v1/public/other-org/blog/posts')
+        .set('x-integration-key', INTEGRATION_KEY)
+        .expect(401);
+      await request(app.getHttpServer())
+        .get('/api/v1/public/acme/blog/posts')
+        .set('x-api-key', 'cms_valid')
+        .expect(401);
+      await request(app.getHttpServer())
+        .get('/api/v1/public/acme/blog/posts')
+        .set('x-public-key', INTEGRATION_KEY)
+        .expect(401);
+
+      expect(postFindMany).not.toHaveBeenCalled();
+      expect(verifyApiKey).not.toHaveBeenCalled();
     });
 
     it('lists published posts in a category and with a tag, never drafts', async () => {
@@ -467,7 +487,7 @@ describe('Application authentication (e2e)', () => {
       const response = await request(app.getHttpServer())
         .get('/api/v1/public/acme/blog/posts')
         .query({ category: 'news', tag: 'hiring' })
-        .set('x-public-key', PUBLIC_KEY)
+        .set('x-integration-key', INTEGRATION_KEY)
         .expect(200)
         .expect('Cache-Control', 'public, max-age=60');
 
@@ -499,14 +519,100 @@ describe('Application authentication (e2e)', () => {
       await request(app.getHttpServer())
         .get('/api/v1/public/acme/blog/posts')
         .query({ category: 'Big News' })
-        .set('x-public-key', PUBLIC_KEY)
+        .set('x-integration-key', INTEGRATION_KEY)
         .expect(400);
+    });
+
+    it('returns a post with every block type as ordered blocks and sanitized html', async () => {
+      const photo = {
+        id: 'media-1',
+        url: 'https://media.example.com/team.png',
+        alt: 'The "team" <b>photo</b>',
+        contentType: 'image/png',
+      };
+      const prose = {
+        type: 'doc',
+        content: [
+          {
+            type: 'paragraph',
+            content: [
+              { type: 'text', text: 'We are ' },
+              { type: 'text', text: 'hiring', marks: [{ type: 'bold' }] },
+              { type: 'text', text: '.' },
+            ],
+          },
+        ],
+      };
+      postFindFirst.mockResolvedValue({
+        id: 'post-1',
+        organizationId: 'organization-a',
+        title: 'Spring openings',
+        slug: 'spring-openings',
+        hasCustomSlug: false,
+        excerpt: 'Roles we are hiring for.',
+        metaTitle: '',
+        metaDescription: '',
+        ogImage: null,
+        coverImage: null,
+        category: null,
+        tags: [],
+        status: 'published',
+        publishedAt,
+        updatedAt: publishedAt,
+        blocks: [
+          { id: 'b1', kind: 'heading', level: 2, text: 'Open <roles>' },
+          { id: 'b2', kind: 'rich_text', doc: prose, html: '<p>We are <strong>hiring</strong>.</p>' },
+          { id: 'b3', kind: 'image', image: { media: photo } },
+          {
+            id: 'b4',
+            kind: 'media_text',
+            side: 'image_left',
+            image: { media: photo },
+            heading: 'Why join us',
+            doc: prose,
+            html: '<p>We are <strong>hiring</strong>.</p>',
+          },
+          { id: 'b5', kind: 'divider' },
+        ],
+      });
+
+      const response = await request(app.getHttpServer())
+        .get('/api/v1/public/acme/blog/posts/spring-openings')
+        .set('x-integration-key', INTEGRATION_KEY)
+        .expect(200)
+        .expect('Cache-Control', 'public, max-age=60');
+
+      const body = response.body as {
+        blocks: Array<{ kind: string }>;
+        html: string;
+        title: string;
+      };
+      expect(body.title).toBe('Spring openings');
+      expect(body.blocks.map((block) => block.kind)).toEqual([
+        'heading',
+        'rich_text',
+        'image',
+        'media_text',
+        'divider',
+      ]);
+      expect(body.html).toBe(
+        [
+          '<h2 class="pb-heading">Open &lt;roles&gt;</h2>',
+          '<div class="pb-rich-text"><p>We are <strong>hiring</strong>.</p></div>',
+          '<figure class="pb-image"><img src="https://media.example.com/team.png" alt="The &quot;team&quot; &lt;b&gt;photo&lt;/b&gt;" loading="lazy" /></figure>',
+          '<div class="pb-media-text pb-media-text--image-left">' +
+            '<figure class="pb-media-text__media"><img src="https://media.example.com/team.png" alt="The &quot;team&quot; &lt;b&gt;photo&lt;/b&gt;" loading="lazy" /></figure>' +
+            '<div class="pb-media-text__body"><h2 class="pb-media-text__heading">Why join us</h2><p>We are <strong>hiring</strong>.</p></div>' +
+            '</div>',
+          '<hr class="pb-divider" />',
+        ].join('\n'),
+      );
     });
 
     it('answers 404 for a slug that is not published', async () => {
       await request(app.getHttpServer())
         .get('/api/v1/public/acme/blog/posts/still-a-draft')
-        .set('x-public-key', PUBLIC_KEY)
+        .set('x-integration-key', INTEGRATION_KEY)
         .expect(404);
 
       expect(postFindFirst).toHaveBeenCalledWith(
@@ -530,12 +636,12 @@ describe('Application authentication (e2e)', () => {
 
       await request(app.getHttpServer())
         .get('/api/v1/public/acme/blog/categories')
-        .set('x-public-key', PUBLIC_KEY)
+        .set('x-integration-key', INTEGRATION_KEY)
         .expect(200)
         .expect([{ name: 'News', slug: 'news', postCount: 2 }]);
       await request(app.getHttpServer())
         .get('/api/v1/public/acme/blog/tags')
-        .set('x-public-key', PUBLIC_KEY)
+        .set('x-integration-key', INTEGRATION_KEY)
         .expect(200)
         .expect([{ name: 'Hiring', slug: 'hiring', postCount: 1 }]);
 
@@ -619,6 +725,232 @@ describe('Application authentication (e2e)', () => {
         .set('x-api-key', 'cms_valid')
         .expect(200)
         .expect([{ id: 'category-1', name: 'News', slug: 'news', postCount: 4 }]);
+    });
+  });
+
+  describe('integration key', () => {
+    const createdAt = new Date('2026-10-25T10:00:00.000Z');
+    const values = { candidate: 'Dana Reyes' };
+
+    function storeLead(): void {
+      leadCreate.mockResolvedValue({
+        id: 'lead-a',
+        createdAt,
+        updatedAt: createdAt,
+        values: [
+          { fieldId: 'field-candidate', value: 'Dana Reyes' },
+          { fieldId: 'field-status', value: 'new' },
+        ],
+      });
+    }
+
+    it('files a lead through the public route and answers with its id only', async () => {
+      storeLead();
+
+      const response = await request(app.getHttpServer())
+        .post('/api/v1/public/acme/leads')
+        .set('x-integration-key', INTEGRATION_KEY)
+        .send({ values })
+        .expect(201);
+
+      expect(response.body).toEqual({ id: 'lead-a' });
+      expect(leadCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ organizationId: 'organization-a' }) as unknown,
+        }),
+      );
+      expect(verifyApiKey).not.toHaveBeenCalled();
+    });
+
+    it('files a lead through POST /leads too, answering with the whole lead', async () => {
+      storeLead();
+
+      const response = await request(app.getHttpServer())
+        .post('/api/v1/leads')
+        .set('x-integration-key', INTEGRATION_KEY)
+        .send({ values })
+        .expect(201);
+
+      expect(response.body).toEqual({
+        id: 'lead-a',
+        values: { candidate: 'Dana Reyes', status: 'new' },
+        createdAt: createdAt.toISOString(),
+        updatedAt: createdAt.toISOString(),
+      });
+      expect(verifyApiKey).not.toHaveBeenCalled();
+    });
+
+    it('still files a lead for an admin API key beside it', async () => {
+      acceptApiKey();
+      storeLead();
+
+      await request(app.getHttpServer())
+        .post('/api/v1/leads')
+        .set('x-api-key', 'cms_valid')
+        .send({ values })
+        .expect(201);
+
+      expect(verifyApiKey).toHaveBeenCalled();
+      expect(integrationKeyFindFirst).not.toHaveBeenCalled();
+    });
+
+    it('refuses a lead from a key that is wrong, rotated away, or another organization', async () => {
+      await request(app.getHttpServer())
+        .post('/api/v1/public/acme/leads')
+        .send({ values })
+        .expect(401);
+      await request(app.getHttpServer())
+        .post('/api/v1/public/acme/leads')
+        .set('x-integration-key', 'pbi_rotated-away')
+        .send({ values })
+        .expect(401);
+      await request(app.getHttpServer())
+        .post('/api/v1/public/other-org/leads')
+        .set('x-integration-key', INTEGRATION_KEY)
+        .send({ values })
+        .expect(401);
+      await request(app.getHttpServer())
+        .post('/api/v1/leads')
+        .set('x-integration-key', 'pbi_rotated-away')
+        .send({ values })
+        .expect(401);
+
+      expect(leadCreate).not.toHaveBeenCalled();
+    });
+
+    it('lists every problem with the lead values in one 400', async () => {
+      const response = await request(app.getHttpServer())
+        .post('/api/v1/public/acme/leads')
+        .set('x-integration-key', INTEGRATION_KEY)
+        .send({ values: { budget: 5000 } })
+        .expect(400);
+
+      expect((response.body as { message: string[] }).message).toEqual([
+        'values.budget is not a lead field',
+        'values.candidate is required',
+      ]);
+      expect(leadCreate).not.toHaveBeenCalled();
+    });
+
+    it('turns the key away from every lead read with a 403', async () => {
+      await request(app.getHttpServer())
+        .get('/api/v1/leads')
+        .set('x-integration-key', INTEGRATION_KEY)
+        .expect(403);
+      await request(app.getHttpServer())
+        .get('/api/v1/leads/lead-a')
+        .set('x-integration-key', INTEGRATION_KEY)
+        .expect(403);
+      await request(app.getHttpServer())
+        .get('/api/v1/leads/fields')
+        .set('x-integration-key', INTEGRATION_KEY)
+        .expect(403);
+
+      expect(leadFindMany).not.toHaveBeenCalled();
+      expect(leadFindFirst).not.toHaveBeenCalled();
+      expect(fieldDefinitionFindMany).not.toHaveBeenCalled();
+    });
+
+    it('turns the key away from drafts and the admin blog reads with a 403', async () => {
+      await request(app.getHttpServer())
+        .post('/api/v1/blog/posts')
+        .set('x-integration-key', INTEGRATION_KEY)
+        .send({ title: 'Sneaky draft' })
+        .expect(403);
+      await request(app.getHttpServer())
+        .get('/api/v1/blog/posts')
+        .set('x-integration-key', INTEGRATION_KEY)
+        .expect(403);
+      await request(app.getHttpServer())
+        .patch('/api/v1/blog/posts/post-1')
+        .set('x-integration-key', INTEGRATION_KEY)
+        .send({ title: 'Edited' })
+        .expect(403);
+      await request(app.getHttpServer())
+        .get('/api/v1/blog/categories')
+        .set('x-integration-key', INTEGRATION_KEY)
+        .expect(403);
+
+      expect(postCreate).not.toHaveBeenCalled();
+      expect(postFindMany).not.toHaveBeenCalled();
+      expect(categoryFindMany).not.toHaveBeenCalled();
+    });
+
+    it('reads a 401 on those routes once the key is rotated away', async () => {
+      await request(app.getHttpServer())
+        .get('/api/v1/leads')
+        .set('x-integration-key', 'pbi_rotated-away')
+        .expect(401);
+      await request(app.getHttpServer())
+        .post('/api/v1/blog/posts')
+        .set('x-integration-key', 'pbi_rotated-away')
+        .send({ title: 'Draft' })
+        .expect(401);
+    });
+
+    it('cannot publish, change a lead, or touch the key, as an admin API key cannot', async () => {
+      const headers = { 'x-integration-key': INTEGRATION_KEY };
+
+      await request(app.getHttpServer())
+        .post('/api/v1/blog/posts/post-1/publish')
+        .set(headers)
+        .expect(401);
+      await request(app.getHttpServer())
+        .patch('/api/v1/leads/lead-a/status')
+        .set(headers)
+        .send({ status: 'qualified' })
+        .expect(401);
+      await request(app.getHttpServer()).get('/api/v1/integration-key').set(headers).expect(401);
+      await request(app.getHttpServer())
+        .post('/api/v1/integration-key/rotate')
+        .set(headers)
+        .expect(401);
+    });
+
+    it('is read and rotated by a signed-in owner or admin only', async () => {
+      acceptApiKey();
+
+      await request(app.getHttpServer()).get('/api/v1/integration-key').expect(401);
+      await request(app.getHttpServer()).post('/api/v1/integration-key/rotate').expect(401);
+      await request(app.getHttpServer())
+        .get('/api/v1/integration-key')
+        .set('x-api-key', 'cms_valid')
+        .expect(401);
+      await request(app.getHttpServer())
+        .post('/api/v1/integration-key/rotate')
+        .set('x-api-key', 'cms_valid')
+        .expect(401);
+    });
+
+    it('serves the integration guide to anyone, as plain text', async () => {
+      const response = await request(app.getHttpServer())
+        .get('/api/v1/docs/integration.md')
+        .expect(200)
+        .expect('Content-Type', 'text/plain; charset=utf-8');
+
+      const guide = response.text;
+      expect(guide).toContain('# Postbox integration guide');
+      expect(guide).toContain('/api/v1/docs/integration.md');
+      expect(guide).toContain('x-integration-key');
+      expect(guide).not.toContain('{{apiBaseUrl}}');
+      expect(verifyApiKey).not.toHaveBeenCalled();
+      expect(integrationKeyFindFirst).not.toHaveBeenCalled();
+    });
+
+    it('caps lead submit at ten a minute for one address', async () => {
+      storeLead();
+      const statuses: number[] = [];
+
+      for (let attempt = 0; attempt < 12; attempt += 1) {
+        const response = await request(app.getHttpServer())
+          .post('/api/v1/public/acme/leads')
+          .set('x-integration-key', INTEGRATION_KEY)
+          .send({ values });
+        statuses.push(response.status);
+      }
+
+      expect(statuses).toContain(429);
+      expect(statuses.filter((status) => status === 201).length).toBeLessThanOrEqual(10);
     });
   });
 

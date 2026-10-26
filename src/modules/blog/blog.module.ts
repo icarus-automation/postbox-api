@@ -1,12 +1,12 @@
 import { Module } from '@nestjs/common';
 
 import { ApiKeysModule } from '../api-keys/api-keys.module';
+import { IntegrationModule } from '../integration/integration.module';
 import { BlogAccessController } from './blog-access.controller';
 import { BlogAccessService } from './blog-access.service';
 import { BlogWebhook } from './blog-webhook.service';
 import { CategoriesController } from './categories.controller';
 import { CategoriesService } from './categories.service';
-import { PublicReadKeyGuard } from './guards/public-read-key.guard';
 import { MediaController } from './media.controller';
 import { MediaService } from './media.service';
 import { OBJECT_STORAGE } from './object-storage';
@@ -18,7 +18,7 @@ import { TagsController } from './tags.controller';
 import { TagsService } from './tags.service';
 
 @Module({
-  imports: [ApiKeysModule],
+  imports: [ApiKeysModule, IntegrationModule],
   controllers: [
     BlogAccessController,
     MediaController,
@@ -34,7 +34,6 @@ import { TagsService } from './tags.service';
     MediaService,
     BlogAccessService,
     BlogWebhook,
-    PublicReadKeyGuard,
     { provide: OBJECT_STORAGE, useClass: R2ObjectStorage },
   ],
 })

@@ -1,8 +1,10 @@
 import { NotFoundException } from '@nestjs/common';
 import { mock, mockReset } from 'jest-mock-extended';
 
+import { SessionOrApiKeyGuard } from '../api-keys/guards/session-or-api-key.guard';
 import type { OrganizationSession } from '../auth/types/auth.types';
 import type { CreateLeadDTO } from './dto/create-lead.dto';
+import { LeadIntakeGuard } from './guards/lead-intake.guard';
 import { LeadsController } from './leads.controller';
 import { LeadsService } from './leads.service';
 import type { OrganizationLead } from './types/leads.types';
@@ -29,13 +31,21 @@ describe('LeadsController', () => {
     mockReset(leadsService);
   });
 
-  it('files a machine-created lead under the API key organization', async () => {
-    await controller.createLead(body, {
-      id: 'key-a',
-      organizationId: 'organization-b',
-    });
+  it('files a machine-created lead under the key organization', async () => {
+    await controller.createLead(body, 'organization-b');
 
     expect(leadsService.createLead).toHaveBeenCalledWith('organization-b', body);
+  });
+
+  it('lets an integration key file a lead but never read the list', () => {
+    const optional = (handler: object) => Reflect.getMetadata('OPTIONAL', handler) as unknown;
+    const guards = (handler: object) =>
+      (Reflect.getMetadata('__guards__', handler) as unknown[] | undefined) ?? [];
+
+    expect(guards(LeadsController.prototype.createLead)).toEqual([LeadIntakeGuard]);
+    expect(guards(LeadsController.prototype.getAllLeads)).toEqual([SessionOrApiKeyGuard]);
+    expect(guards(LeadsController.prototype.getLead)).toEqual([SessionOrApiKeyGuard]);
+    expect(optional(LeadsController.prototype.getAllLeads)).toBe(true);
   });
 
   it('returns not found for leads outside the resolved organization', async () => {

@@ -148,3 +148,15 @@ curl -i https://postbox-api.geoplanph.com/api/v1/health
 ```
 
 An HTTP `200` response means the backend is live. Test login from the frontend.
+
+Then check the public integration guide, which needs no key. It should print the guide with the
+API address filled in:
+
+```bash
+curl -i https://postbox-api.geoplanph.com/api/v1/docs/integration.md
+```
+
+The integration key release drops the old public key and adds the integration key table, with no
+backfill. Every organization created from then on gets its key when it is created. One that already exists
+has none until the database is reset, or until an owner opens Settings, Integration key and presses
+Create a key.

@@ -15,8 +15,8 @@ import {
   type PublicImage,
   type SanitizedHtml,
 } from './blog.types';
-import { parseProseDoc, renderProse, markdownToDoc } from './rich-text.codec';
-import { sanitizeHtml } from './sanitize-html';
+import { escapeText, parseProseDoc, renderProse, markdownToDoc } from './rich-text.codec';
+import { sanitizeHtml, sanitizePostHtml } from './sanitize-html';
 
 export type MediaIndex = ReadonlyMap<MediaId, MediaRef>;
 
@@ -28,6 +28,9 @@ export type BlockKindRow<K extends Block['kind']> = {
   parse(raw: unknown, media: MediaIndex, id: BlockId): Extract<Block, { kind: K }>;
   fromStored(raw: unknown): Extract<Block, { kind: K }>;
   toPublic(block: Extract<Block, { kind: K }>): Extract<PublicBlock, { kind: K }>;
+  // The block's markup, with the pb-* class names a site styles. renderBlocksHtml
+  // sanitizes the whole post after joining these, so a row only has to escape its text.
+  toHtml(block: Extract<PublicBlock, { kind: K }>): string;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -171,6 +174,10 @@ function plainHeading(raw: unknown): string {
   return text;
 }
 
+function imageHtml(image: PublicImage): string {
+  return `<img src="${escapeText(image.url)}" alt="${escapeText(image.alt)}" loading="lazy">`;
+}
+
 export const BLOCK_KINDS: { [K in Block['kind']]: BlockKindRow<K> } = {
   rich_text: {
     kind: 'rich_text',
@@ -190,6 +197,9 @@ export const BLOCK_KINDS: { [K in Block['kind']]: BlockKindRow<K> } = {
     toPublic(block) {
       return { kind: 'rich_text', doc: block.doc, html: block.html };
     },
+    toHtml(block) {
+      return `<div class="pb-rich-text">${block.html}</div>`;
+    },
   },
   image: {
     kind: 'image',
@@ -202,6 +212,10 @@ export const BLOCK_KINDS: { [K in Block['kind']]: BlockKindRow<K> } = {
     },
     toPublic(block) {
       return { kind: 'image', image: publicImage(block.image) };
+    },
+    toHtml(block) {
+      // An empty slot has nothing to show, so it leaves no markup.
+      return block.image ? `<figure class="pb-image">${imageHtml(block.image)}</figure>` : '';
     },
   },
   media_text: {
@@ -247,6 +261,20 @@ export const BLOCK_KINDS: { [K in Block['kind']]: BlockKindRow<K> } = {
         html: block.html,
       };
     },
+    toHtml(block) {
+      // Markup follows the page: the image comes first when it sits on the left, so
+      // the layout holds even where the site styles nothing.
+      const media = block.image
+        ? `<figure class="pb-media-text__media">${imageHtml(block.image)}</figure>`
+        : '';
+      const heading = block.heading
+        ? `<h2 class="pb-media-text__heading">${escapeText(block.heading)}</h2>`
+        : '';
+      const body = `<div class="pb-media-text__body">${heading}${block.html}</div>`;
+      const side = block.side === 'image_left' ? 'image-left' : 'image-right';
+      const parts = block.side === 'image_left' ? media + body : body + media;
+      return `<div class="pb-media-text pb-media-text--${side}">${parts}</div>`;
+    },
   },
   heading: {
     kind: 'heading',
@@ -273,6 +301,9 @@ export const BLOCK_KINDS: { [K in Block['kind']]: BlockKindRow<K> } = {
     toPublic(block) {
       return { kind: 'heading', level: block.level, text: block.text };
     },
+    toHtml(block) {
+      return `<h${block.level} class="pb-heading">${escapeText(block.text)}</h${block.level}>`;
+    },
   },
   divider: {
     kind: 'divider',
@@ -285,6 +316,9 @@ export const BLOCK_KINDS: { [K in Block['kind']]: BlockKindRow<K> } = {
     },
     toPublic() {
       return { kind: 'divider' };
+    },
+    toHtml() {
+      return '<hr class="pb-divider">';
     },
   },
 };
@@ -341,6 +375,17 @@ export function toPublicBlocks(blocks: Block[]): PublicBlock[] {
     const row = BLOCK_KINDS[block.kind] as BlockKindRow<typeof block.kind>;
     return row.toPublic(block);
   });
+}
+
+/** The whole post body as one sanitized string. Title and images beside it stay the site's. */
+export function renderBlocksHtml(blocks: PublicBlock[]): SanitizedHtml {
+  const markup = blocks
+    .map((block) => {
+      const row = BLOCK_KINDS[block.kind] as BlockKindRow<typeof block.kind>;
+      return row.toHtml(block);
+    })
+    .join('\n');
+  return sanitizePostHtml(markup);
 }
 
 export function collectMediaIds(

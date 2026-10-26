@@ -17,6 +17,7 @@ import {
 import {
   BLOCK_KINDS,
   parseBlocks,
+  renderBlocksHtml,
   toPublicBlocks,
   uuidV7,
   type MediaIndex,
@@ -178,7 +179,8 @@ export function publicTerm(term: TermRef): PublicTerm {
   return { name: term.name, slug: term.slug };
 }
 
-function toWebhookPost(doc: PostDocument): WebhookPost {
+// Everything a site reads except the rendered html, which is made from the blocks.
+function toPublicFields(doc: PostDocument): Omit<WebhookPost, 'html'> {
   const publishedAt =
     doc.publication.status === 'published'
       ? doc.publication.publishedAt.toISOString()
@@ -201,8 +203,14 @@ function toWebhookPost(doc: PostDocument): WebhookPost {
   };
 }
 
+function toWebhookPost(doc: PostDocument): WebhookPost {
+  const post = toPublicFields(doc);
+  return { ...post, html: renderBlocksHtml(post.blocks) };
+}
+
+// The html is left out: it follows from the blocks, so comparing them is enough.
 function canonicalPublic(doc: PostDocument): string {
-  const post = toWebhookPost(doc);
+  const post = toPublicFields(doc);
   return JSON.stringify({
     title: post.title,
     slug: post.slug,
@@ -255,6 +263,7 @@ export function toPublicPost(doc: PostDocument): PublicPost {
     tags: post.tags,
     publishedAt: doc.publication.publishedAt.toISOString(),
     blocks: post.blocks,
+    html: post.html,
   };
 }
 

@@ -88,6 +88,7 @@ model Organization {
   tags             Tag[]
   media            Media[]
   blogAccess       BlogAccess?
+  integrationKey   IntegrationKey?
 
   @@map("organizations")
 }
@@ -333,12 +334,23 @@ model Media {
 model BlogAccess {
   organizationId String       @id @map("organization_id")
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  publicKeyHash  String?      @map("public_key_hash")
-  publicKeyLast4 String?      @map("public_key_last4")
   webhookUrl     String?      @map("webhook_url")
   webhookSecret  String?      @map("webhook_secret")
   createdAt      DateTime     @default(now()) @map("created_at")
   updatedAt      DateTime     @updatedAt @map("updated_at")
 
   @@map("blog_access")
+}
+
+// The one key a website uses to read published posts and send leads. It is kept as
+// is, not hashed, because the Developers page shows it and it is safe in website
+// code. Rotating replaces `key`, which cuts the old one off at once.
+model IntegrationKey {
+  organizationId String       @id @map("organization_id")
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  key            String       @unique
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+
+  @@map("integration_keys")
 }

@@ -8,7 +8,7 @@ The API behind a CMS for the owner's own sites and agents today, headed for a pu
 
 Phase 1 domain is leads. Machines post them to `POST /api/v1/leads`, the owner reads them and sets their status in the client. `docs/fe-phase1-api.md` and `docs/fe-lead-fields-api.md` are the contracts the client repo builds against. Keep them true when routes or fields change.
 
-The blog is the second domain. A post is a list of blocks, filed under at most one category and any number of tags, all scoped to the organization. A person writes and publishes in the client, and agents can file drafts with an API key. Websites read published posts, categories and tags with a public key under `/api/v1/public/:orgSlug/blog`. `docs/public-content-api.md` is that contract. Keep it true when those routes, fields or webhook events change.
+The blog is the second domain. A post is a list of blocks, filed under at most one category and any number of tags, all scoped to the organization. A person writes and publishes in the client, and agents can file drafts with an admin API key. Websites read published posts, categories and tags with the organization's integration key under `/api/v1/public/:orgSlug/blog`, and send leads to `/api/v1/public/:orgSlug/leads`. The public integration guide is that contract. It is `src/modules/integration/integration-guide.md`, served without a key at `GET /api/v1/docs/integration.md`. Keep it true when those routes, fields, keys or webhook events change. A spec checks that it names every route and every `pb-` class.
 
 Record attributes come from organization-scoped field definitions per collection (`FieldDefinition`, only `lead` wired so far). System fields ship with every organization and cannot be deleted, and admins add custom ones. A lead stores one `LeadValue` row per filled field, and every write is checked against the definitions, refusing unknown and read-only keys. Organization provisioning seeds the system fields from `src/modules/leads/lead-system-fields.ts`.
 
@@ -22,13 +22,13 @@ Record attributes come from organization-scoped field definitions per collection
 
 ## Repository Map
 
-- `src/modules`: business features such as auth, api keys, leads and the blog
+- `src/modules`: business features such as auth, api keys, the integration key and guide, leads and the blog
 - `src/core`: infrastructure, configuration, database, health, and security
 - `src/common`: shared transport concerns with no feature-specific business logic
 - `prisma/schema.prisma`: database model
 - `prisma/migrations`: committed, append-only migration history
 - `test`: HTTP-level tests
-- `docs`: contracts published to other repos, and the deployment runbook
+- `docs`: contracts published to other repos, and the deployment runbook. The public integration guide is not here: the image copies only `dist`, so it lives beside its module in `src/modules/integration` and `nest-cli.json` copies it into the build.
 
 ## Package Management
 
@@ -79,8 +79,12 @@ Record attributes come from organization-scoped field definitions per collection
 - The plugin runs one unnamed configuration, `ORGANIZATION_API_KEY_CONFIG_ID` in `src/modules/auth/api-key-config.ts`, with `references: 'organization'`. `ApiKeyGuard` pins verification to it, because it reads a verified key's `referenceId` as an organization id. A second configuration has to revisit that guard.
 - The organization plugin carries a custom `apiKey` statement in `src/modules/auth/organization-access.ts`. `owner` and `admin` manage keys, `member` never does. The stock Better Auth roles do not include that statement, so the roles must stay redeclared there.
 - Creation returns the raw key once and nothing reads it again. Never return or log a raw key or a key hash.
-- Keys are minted over HTTP by an `owner` or `admin` session. There is no key admin UI. Revoking disables the key rather than deleting it, and repeating a revoke leaves the first revocation time alone.
+- Keys are minted over HTTP by an `owner` or `admin` session. The client lists, makes and revokes them under Settings, Advanced, and calls them admin API keys because they can file drafts and read leads. They are server-only. Revoking disables the key rather than deleting it, and repeating a revoke leaves the first revocation time alone.
 - An API key carries its own organization. Scope machine reads and writes by the key organization, never by a session.
+- The integration key is not a Better Auth API key. It is one row per organization in `integration_keys`, made by `afterCreateOrganization` through `provisionIntegrationKey`, so every organization has it from the start. Rotating replaces the key in that row, which cuts the old one off at once. It is stored as is, not hashed, because the Developers page shows it and it is safe in website code. That choice is for this key only. Never copy it to an admin API key.
+- A website sends the integration key in `x-integration-key`. It can read published posts, categories and tags, and file leads, and nothing else. `IntegrationKeyGuard` guards `/api/v1/public/:orgSlug/...` and checks the key against the slug in the path. `LeadIntakeGuard` lets it file a lead at `POST /api/v1/leads` as well, beside the admin key that route always took. `SessionOrApiKeyGuard` recognises it and answers 403, so it never reads leads or creates drafts. Session-only routes answer it 401, as they answer an admin key. `CurrentOrganizationId` reads the key's organization like any other principal's.
+- `POST /api/v1/public/:orgSlug/leads` is the browser-safe way to file a lead. It answers with the id only, because a whole lead lists every field key the organization has. It is throttled to 10 a minute per IP, tighter than the rest of the API.
+- `publicApiCors` is applied in `main.ts` before `enableCors`, because `enableCors` ends every preflight itself and would answer the ones for `/api/v1/public/` with no origin allowed. It lets any origin send `GET` and `POST` with `x-integration-key` and `Content-Type`. `x-api-key` never joins that list.
 - Leads start as `new`, and only a session moves them, through `PATCH /api/v1/leads/:id/status`. Never open that route to an API key, because agents must not advance a lead. `status` stays a read-only lead field so no values write can move it.
 - Archiving is not a status. `Lead.isArchived` is its own column, moved by `PATCH /api/v1/leads/:id/archive`, and it never touches `status`, so a restored lead comes back at the stage it left on. `GET /api/v1/leads` reads the inbox by default and the archive with `archived=true`, never both. That route is session only for the same reason as status.
 
@@ -93,6 +97,7 @@ Record attributes come from organization-scoped field definitions per collection
 - Deleting a category or a tag never deletes a post. `posts.category_id` is set to null and `post_tags` rows cascade. Renaming or deleting one sends `post.updated` for every published post it was on.
 - The public category and tag lists leave out anything with no published post, so a name made for a draft stays off the site.
 - Webhooks are `post.published`, `post.unpublished` and `post.updated`, signed in `X-Blog-Signature`.
+- A public post and a webhook post carry `blocks` and `html`. `html` is the blocks rendered by `renderBlocksHtml`: each row of `BLOCK_KINDS` has a `toHtml`, so a new block kind cannot ship without markup. The class names are `pb-` plus the block type (`pb-heading`, `pb-rich-text`, `pb-image`, `pb-media-text`, `pb-divider`) with `pb-media-text__media`, `__body`, `__heading` and `--image-left` or `--image-right` inside the media block. They are stable, and the integration guide lists them. `html` is made on read and never stored, and it is the body only: no title and no cover image. `sanitizePostHtml` lets through only the listed tags, `pb-` classes, and http(s) addresses.
 
 ## Prisma Rules
 
@@ -111,6 +116,7 @@ Record attributes come from organization-scoped field definitions per collection
 - The `migrate` service runs `prisma migrate deploy` before `api` starts. That is why `prisma` is a runtime dependency. Keep it there. It calls the Prisma CLI with `node` directly, never `pnpm exec`: pnpm 12 reinstalls first, and as user `node` that fails on root-owned `node_modules`.
 - The image build runs `prisma generate` with a dummy `DATABASE_URL`, because `prisma.config.ts` fails without one.
 - `main.ts` sets `trust proxy` to 1 for the one Caddy hop, so the throttler sees caller IPs. Cloudflare must stay DNS only for the API host, or the hop count is wrong.
+- The integration guide is a markdown asset, not code. `nest-cli.json` copies `integration-guide.md` into `dist` next to the compiled module, and the runtime image takes `dist` whole. If the file moves, move the `assets` entry with it, or the guide route fails at start. The guide fills in its own address from `BETTER_AUTH_URL`, so a domain move needs no edit to it.
 - `docs/deployment.md` is the runbook. Keep it true when compose, hosts or env change.
 
 ## Verification

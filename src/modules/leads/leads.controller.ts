@@ -16,17 +16,15 @@ import {
 } from '@thallesp/nestjs-better-auth';
 
 import type { PaginatedResponse } from '../../common/responses/paginated-api.response';
-import { CurrentApiKey } from '../api-keys/decorators/current-api-key.decorator';
 import { CurrentOrganizationId } from '../api-keys/decorators/current-organization-id.decorator';
 import { SessionOrApiKey } from '../api-keys/decorators/session-or-api-key.decorator';
-import { ApiKeyGuard } from '../api-keys/guards/api-key.guard';
-import type { ApiKeyPrincipal } from '../api-keys/types/api-keys.types';
 import type { OrganizationSession } from '../auth/types/auth.types';
 import { CreateLeadDTO } from './dto/create-lead.dto';
 import { FilterLeadsDTO } from './dto/filter-leads.dto';
 import { SetLeadArchivedDTO } from './dto/set-lead-archived.dto';
 import { SetLeadStatusDTO } from './dto/set-lead-status.dto';
 import { UpdateLeadValuesDTO } from './dto/update-lead-values.dto';
+import { LeadIntakeGuard } from './guards/lead-intake.guard';
 import { LeadsService } from './leads.service';
 import type { OrganizationLead } from './types/leads.types';
 
@@ -35,15 +33,16 @@ import type { OrganizationLead } from './types/leads.types';
 export class LeadsController {
   constructor(private readonly leadsService: LeadsService) {}
 
-  // Machine callers only: an API key replaces the browser session here.
+  // Machine callers only: an admin API key or an integration key replaces the
+  // browser session here.
   @AllowAnonymous()
-  @UseGuards(ApiKeyGuard)
+  @UseGuards(LeadIntakeGuard)
   @Post()
   createLead(
     @Body() body: CreateLeadDTO,
-    @CurrentApiKey() apiKey: ApiKeyPrincipal,
+    @CurrentOrganizationId() organizationId: string,
   ): Promise<OrganizationLead> {
-    return this.leadsService.createLead(apiKey.organizationId, body);
+    return this.leadsService.createLead(organizationId, body);
   }
 
   // Agents read with their API key too, so they can look up a lead before filing

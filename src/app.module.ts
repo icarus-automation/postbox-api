@@ -11,18 +11,18 @@ import { AppService } from './app.service';
 import { PrismaModule } from './core/database/prisma.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { ApiKeysModule } from './modules/api-keys/api-keys.module';
+import { IntegrationModule } from './modules/integration/integration.module';
 import { LeadsModule } from './modules/leads/leads.module';
-import { PublicApiCorsModule } from './modules/blog/public-api-cors.module';
 import { BlogModule } from './modules/blog/blog.module';
 
 @Module({
   imports: [
-    PublicApiCorsModule,
     RateLimitModule,
     HealthModule,
     PrismaModule,
     AuthModule,
     ApiKeysModule,
+    IntegrationModule,
     LeadsModule,
     BlogModule,
   ],

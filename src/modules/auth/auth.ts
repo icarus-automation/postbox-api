@@ -8,6 +8,7 @@ import { organization } from 'better-auth/plugins';
 
 import { env } from '../../core/config/env.config';
 import { prisma } from '../../core/database/prisma.service';
+import { provisionIntegrationKey } from '../integration/integration-key';
 import { provisionLeadSystemFields } from '../leads/lead-system-fields';
 import {
   API_KEY_NAME_MAX_LENGTH,
@@ -128,6 +129,7 @@ export const auth = betterAuth({
         },
         afterCreateOrganization: async ({ organization }) => {
           await provisionLeadSystemFields(prisma, organization.id);
+          await provisionIntegrationKey(prisma, organization.id);
         },
         beforeCreateInvitation: async ({ invitation }) => {
           const invitedUser = await prisma.user.findUnique({
