@@ -261,6 +261,30 @@ describe('LeadFieldsService', () => {
     expect(update).not.toHaveBeenCalled();
   });
 
+  it('keeps the whyLead required flag with the channel, but lets its label change', async () => {
+    findFirst.mockResolvedValue(
+      found({
+        ...dealSizeField,
+        id: 'field-why-lead',
+        key: 'whyLead',
+        type: FieldType.long_text,
+        isSystem: true,
+      }),
+    );
+
+    await expect(
+      service.updateLeadField('organization-a', 'field-why-lead', {
+        isRequired: true,
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(update).not.toHaveBeenCalled();
+
+    await service.updateLeadField('organization-a', 'field-why-lead', {
+      label: 'Why message them',
+    });
+    expect(update).toHaveBeenCalled();
+  });
+
   it('cannot change or delete a field through another organization', async () => {
     findFirst.mockResolvedValue(null);
 

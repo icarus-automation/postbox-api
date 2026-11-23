@@ -1,5 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
-import { FieldType } from '@prisma/client';
+import { FieldType, LeadChannel, type Prisma } from '@prisma/client';
 import { mock, mockDeep, mockReset } from 'jest-mock-extended';
 
 import type { PrismaService } from '../../core/database/prisma.service';
@@ -40,6 +40,9 @@ const fields: LeadField[] = [
   }),
   leadField('source', FieldType.url),
   leadField('note', FieldType.long_text),
+  leadField('whyLead', FieldType.long_text),
+  leadField('email', FieldType.text),
+  leadField('phone', FieldType.text),
   leadField('status', FieldType.select, {
     isReadOnly: true,
     options: ['new', 'contacted', 'qualified'],
@@ -51,24 +54,40 @@ const fields: LeadField[] = [
 const createdAt = new Date('2026-09-13T10:00:00.000Z');
 const updatedAt = new Date('2026-09-13T11:00:00.000Z');
 
+type StoredSubmission = {
+  id: string;
+  channel: LeadChannel;
+  values: Record<string, string | number>;
+  createdAt: Date;
+};
+
 // The typed mock is declared to return a bare Lead, while the service reads one
 // with its values joined in, so the fixture is cast to the call's real shape.
 function storedLead(
   values: { fieldId: string; value: string | number }[],
   isArchived = false,
+  channel: LeadChannel = LeadChannel.form,
+  submissions: StoredSubmission[] = [],
 ): StoredLead {
   return {
     id: 'lead-a',
+    channel,
     isArchived,
     createdAt,
     updatedAt,
     values,
+    submissions,
   } as unknown as StoredLead;
 }
 
-// What the scoping lookup reads before a write: just the id.
-function existingLead(): StoredLead {
-  return { id: 'lead-a' } as StoredLead;
+// What the scoping lookup reads before a write: the id and the channel.
+function existingLead(channel: LeadChannel = LeadChannel.form): StoredLead {
+  return { id: 'lead-a', channel } as StoredLead;
+}
+
+// The bound values of the contact conditions in the dedupe query.
+function contactValues(call: unknown[]): unknown[] {
+  return (call[2] as Prisma.Sql).values;
 }
 
 describe('LeadsService', () => {
@@ -77,12 +96,14 @@ describe('LeadsService', () => {
   const service = new LeadsService(prisma, leadFieldsService);
 
   const { create, count, findMany, findFirst, update } = prisma.lead;
+  const queryRaw = prisma.$queryRaw;
   const getAllLeadFields = leadFieldsService.getAllLeadFields;
 
   beforeEach(() => {
     mockReset(prisma);
     mockReset(leadFieldsService);
     getAllLeadFields.mockResolvedValue(fields);
+    queryRaw.mockResolvedValue([]);
   });
 
   it('stores the given values and the initial status under the calling organization', async () => {
@@ -94,7 +115,7 @@ describe('LeadsService', () => {
       ]),
     );
 
-    await service.createLead('organization-a', {
+    await service.createLead('organization-a', LeadChannel.form, {
       values: { candidate: 'Dana Reyes', product: 'POS' },
     });
 
@@ -103,6 +124,7 @@ describe('LeadsService', () => {
       expect.objectContaining({
         data: {
           organizationId: 'organization-a',
+          channel: LeadChannel.form,
           values: {
             create: [
               { fieldId: 'field-candidate', value: 'Dana Reyes' },
@@ -117,11 +139,195 @@ describe('LeadsService', () => {
 
   it('writes nothing when the values do not fit the fields', async () => {
     await expect(
-      service.createLead('organization-a', {
+      service.createLead('organization-a', LeadChannel.form, {
         values: { candidate: 'Dana Reyes', product: 'POS', budget: 5000 },
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(create).not.toHaveBeenCalled();
+  });
+
+  it('files an agent lead with its reason under the agent channel', async () => {
+    create.mockResolvedValue(storedLead([], false, LeadChannel.agent));
+
+    const lead = await service.createLead('organization-a', LeadChannel.agent, {
+      values: {
+        candidate: 'Dana Reyes',
+        product: 'POS',
+        whyLead: 'Asked for a POS in a group post.',
+      },
+    });
+
+    expect(lead.channel).toBe(LeadChannel.agent);
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          channel: LeadChannel.agent,
+          values: {
+            create: expect.arrayContaining([
+              {
+                fieldId: 'field-whyLead',
+                value: 'Asked for a POS in a group post.',
+              },
+            ]) as unknown,
+          },
+        }) as object,
+      }),
+    );
+  });
+
+  it('refuses an agent lead without a reason before looking for a repeat', async () => {
+    await expect(
+      service.createLead('organization-a', LeadChannel.agent, {
+        values: { candidate: 'Dana Reyes', product: 'POS', email: 'd@x.co' },
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(queryRaw).not.toHaveBeenCalled();
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it('looks for a repeat only when an email or phone is given', async () => {
+    create.mockResolvedValue(storedLead([]));
+
+    await service.createLead('organization-a', LeadChannel.form, {
+      values: { candidate: 'Dana Reyes', product: 'POS', phone: 'n/a' },
+    });
+
+    expect(queryRaw).not.toHaveBeenCalled();
+    expect(create).toHaveBeenCalled();
+  });
+
+  it('matches a repeat on the email in any case and the phone digits alone', async () => {
+    create.mockResolvedValue(storedLead([]));
+
+    await service.createLead('organization-a', LeadChannel.form, {
+      values: {
+        candidate: 'Dana Reyes',
+        product: 'POS',
+        email: '  Dana@Example.com ',
+        phone: '+63 (917) 123-4567',
+      },
+    });
+
+    const [call] = queryRaw.mock.calls;
+    expect(call[1]).toBe('organization-a');
+    expect(contactValues(call)).toEqual([
+      'field-email',
+      'dana@example.com',
+      'field-phone',
+      '639171234567',
+    ]);
+    expect(create).toHaveBeenCalled();
+  });
+
+  it('attaches a repeat to the lead it matches instead of filing a new one', async () => {
+    queryRaw.mockResolvedValue([{ id: 'lead-a', channel: LeadChannel.form }]);
+    update.mockResolvedValue(
+      storedLead([], false, LeadChannel.form, [
+        {
+          id: 'submission-a',
+          channel: LeadChannel.form,
+          values: { email: 'dana@example.com', signal: 'Still keen' },
+          createdAt: updatedAt,
+        },
+      ]),
+    );
+
+    const lead = await service.createLead('organization-a', LeadChannel.form, {
+      values: {
+        candidate: 'Dana Reyes',
+        product: 'POS',
+        email: 'dana@example.com',
+        note: 'Still keen',
+      },
+    });
+
+    expect(create).not.toHaveBeenCalled();
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'lead-a' },
+        data: {
+          updatedAt: expect.any(Date) as Date,
+          // Filled only where the lead has no value yet, and never the status.
+          values: {
+            createMany: {
+              data: [
+                { fieldId: 'field-candidate', value: 'Dana Reyes' },
+                { fieldId: 'field-product', value: 'POS' },
+                { fieldId: 'field-email', value: 'dana@example.com' },
+                { fieldId: 'field-note', value: 'Still keen' },
+              ],
+              skipDuplicates: true,
+            },
+          },
+          submissions: {
+            create: {
+              channel: LeadChannel.form,
+              values: {
+                candidate: 'Dana Reyes',
+                product: 'POS',
+                email: 'dana@example.com',
+                note: 'Still keen',
+              },
+            },
+          },
+        },
+      }),
+    );
+    expect(lead.submissions).toEqual([
+      {
+        id: 'submission-a',
+        channel: LeadChannel.form,
+        values: { email: 'dana@example.com', signal: 'Still keen' },
+        createdAt: updatedAt,
+      },
+    ]);
+    expect(lead.nowInbound).toBe(false);
+  });
+
+  it('flags an agent lead as now inbound once its person sends the form', async () => {
+    queryRaw.mockResolvedValue([{ id: 'lead-a', channel: LeadChannel.agent }]);
+    update.mockResolvedValue(
+      storedLead([], false, LeadChannel.agent, [
+        {
+          id: 'submission-a',
+          channel: LeadChannel.form,
+          values: { email: 'dana@example.com' },
+          createdAt: updatedAt,
+        },
+      ]),
+    );
+
+    const lead = await service.createLead('organization-a', LeadChannel.form, {
+      values: { candidate: 'Dana Reyes', product: 'POS', email: 'dana@example.com' },
+    });
+
+    expect(lead.channel).toBe(LeadChannel.agent);
+    expect(lead.nowInbound).toBe(true);
+  });
+
+  it('never gives a form lead the reason from an agent repeat', async () => {
+    queryRaw.mockResolvedValue([{ id: 'lead-a', channel: LeadChannel.form }]);
+    update.mockResolvedValue(storedLead([]));
+
+    await service.createLead('organization-a', LeadChannel.agent, {
+      values: {
+        candidate: 'Dana Reyes',
+        product: 'POS',
+        phone: '0917 123 4567',
+        whyLead: 'Posted about a second cafe.',
+      },
+    });
+
+    const data = update.mock.calls[0][0].data as {
+      values: { createMany: { data: { fieldId: string }[] } };
+      submissions: { create: { values: Record<string, unknown> } };
+    };
+    expect(data.values.createMany.data.map(({ fieldId }) => fieldId)).not.toContain(
+      'field-whyLead',
+    );
+    expect(data.submissions.create.values['whyLead']).toBe(
+      'Posted about a second cafe.',
+    );
   });
 
   it('returns every field key in field order, with receivedAt from the lead row', async () => {
@@ -135,15 +341,21 @@ describe('LeadsService', () => {
     await expect(service.getLead('organization-a', 'lead-a')).resolves.toEqual(
       {
         id: 'lead-a',
+        channel: LeadChannel.form,
+        nowInbound: false,
         values: {
           candidate: 'Dana Reyes',
           product: null,
           source: null,
           note: null,
+          whyLead: null,
+          email: null,
+          phone: null,
           status: 'contacted',
           receivedAt: '2026-09-13T10:00:00.000Z',
           dealSize: null,
         },
+        submissions: [],
         isArchived: false,
         createdAt,
         updatedAt,
@@ -186,6 +398,53 @@ describe('LeadsService', () => {
     expect(findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { organizationId: 'organization-a', isArchived: true },
+      }),
+    );
+  });
+
+  it('lists inbound leads with the agent leads that sent the form since', async () => {
+    count.mockResolvedValue(0);
+    findMany.mockResolvedValue([]);
+
+    await service.getAllLeads('organization-a', {
+      page: 1,
+      limit: 10,
+      archived: false,
+      channel: LeadChannel.form,
+    });
+
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          organizationId: 'organization-a',
+          isArchived: false,
+          OR: [
+            { channel: LeadChannel.form },
+            { submissions: { some: { channel: LeadChannel.form } } },
+          ],
+        },
+      }),
+    );
+  });
+
+  it('lists prospects as every lead an agent found', async () => {
+    count.mockResolvedValue(0);
+    findMany.mockResolvedValue([]);
+
+    await service.getAllLeads('organization-a', {
+      page: 1,
+      limit: 10,
+      archived: false,
+      channel: LeadChannel.agent,
+    });
+
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          organizationId: 'organization-a',
+          isArchived: false,
+          channel: LeadChannel.agent,
+        },
       }),
     );
   });
@@ -331,6 +590,28 @@ describe('LeadsService', () => {
         },
       }),
     );
+  });
+
+  it('refuses a reason typed onto a form lead', async () => {
+    findFirst.mockResolvedValue(existingLead(LeadChannel.form));
+
+    await expect(
+      service.updateLeadValues('organization-a', 'lead-a', {
+        values: { whyLead: 'Looks keen' },
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('edits the reason on an agent lead', async () => {
+    findFirst.mockResolvedValue(existingLead(LeadChannel.agent));
+    update.mockResolvedValue(storedLead([], false, LeadChannel.agent));
+
+    await service.updateLeadValues('organization-a', 'lead-a', {
+      values: { whyLead: 'Opening a second cafe.' },
+    });
+
+    expect(update).toHaveBeenCalled();
   });
 
   it('never lets a values update change the status', async () => {

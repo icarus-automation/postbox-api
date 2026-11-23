@@ -205,19 +205,47 @@ model FieldDefinition {
   @@map("field_definitions")
 }
 
+// How a lead came in. The server sets it from the key that filed the lead and
+// never reads it from the body: the integration key is a website form, an admin
+// API key is an agent.
+enum LeadChannel {
+  form
+  agent
+
+  @@map("lead_channel")
+}
+
 model Lead {
-  id             String       @id @default(uuid(7))
-  organizationId String       @map("organization_id")
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  id             String           @id @default(uuid(7))
+  organizationId String           @map("organization_id")
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  channel        LeadChannel
   values         LeadValue[]
+  submissions    LeadSubmission[]
   // Archive is its own axis, not a stage: an archived lead keeps the status it
   // reached and only leaves the inbox.
-  isArchived     Boolean      @default(false) @map("is_archived")
-  createdAt      DateTime     @default(now()) @map("created_at")
-  updatedAt      DateTime     @updatedAt @map("updated_at")
+  isArchived     Boolean          @default(false) @map("is_archived")
+  createdAt      DateTime         @default(now()) @map("created_at")
+  updatedAt      DateTime         @updatedAt @map("updated_at")
 
   @@index([organizationId, isArchived, createdAt])
   @@map("leads")
+}
+
+// A later submission from the same email or phone, attached to the lead it
+// matched instead of filed as a second lead. The first submission is the lead's
+// own values, so it has no row here.
+model LeadSubmission {
+  id        String      @id @default(uuid(7))
+  leadId    String      @map("lead_id")
+  lead      Lead        @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  channel   LeadChannel
+  // The values as they were sent and checked, keyed by field key.
+  values    Json
+  createdAt DateTime    @default(now()) @map("created_at")
+
+  @@index([leadId, createdAt])
+  @@map("lead_submissions")
 }
 
 // One row per filled field. Deleting a field definition deletes its values.

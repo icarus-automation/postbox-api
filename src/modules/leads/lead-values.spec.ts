@@ -1,5 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
-import { FieldType } from '@prisma/client';
+import { FieldType, LeadChannel } from '@prisma/client';
 
 import { parseLeadLookup, parseLeadValues } from './lead-values';
 import type { LeadField } from './types/leads.types';
@@ -48,9 +48,11 @@ const complete = {
 function errorsFor(
   input: Record<string, unknown>,
   mode: 'create' | 'update',
+  channel: LeadChannel = LeadChannel.form,
+  against: LeadField[] = fields,
 ): string[] {
   try {
-    parseLeadValues(fields, input, mode);
+    parseLeadValues(against, input, mode, channel);
     return [];
   } catch (error) {
     if (!(error instanceof BadRequestException)) throw error;
@@ -64,6 +66,7 @@ describe('parseLeadValues', () => {
       fields,
       { ...complete, dealSize: 1200.5, followUpOn: '2026-09-30' },
       'create',
+      LeadChannel.form,
     );
 
     expect(changes.clear).toEqual([]);
@@ -107,11 +110,20 @@ describe('parseLeadValues', () => {
 
   it('ignores null on create and clears on update', () => {
     expect(
-      parseLeadValues(fields, { ...complete, note: null }, 'create')
-        .clear,
+      parseLeadValues(
+        fields,
+        { ...complete, note: null },
+        'create',
+        LeadChannel.form,
+      ).clear,
     ).toEqual([]);
 
-    const changes = parseLeadValues(fields, { note: null }, 'update');
+    const changes = parseLeadValues(
+      fields,
+      { note: null },
+      'update',
+      LeadChannel.form,
+    );
     expect(changes.set).toEqual([]);
     expect(changes.clear.map((field) => field.key)).toEqual(['note']);
   });
@@ -143,6 +155,84 @@ describe('parseLeadValues', () => {
       'values.dealSize must be a number',
       'values.followUpOn must be a date formatted YYYY-MM-DD',
     ]);
+  });
+});
+
+describe('parseLeadValues whyLead by channel', () => {
+  // Marked required on purpose: the channel decides, whatever the definition says.
+  const withReason = [
+    ...fields,
+    leadField('whyLead', FieldType.long_text, {
+      isSystem: true,
+      isRequired: true,
+    }),
+  ];
+  const agentRequired =
+    'values.whyLead is required on agent leads, which an admin API key files';
+
+  it('refuses an agent lead without a reason, in one clear message', () => {
+    expect(
+      errorsFor(complete, 'create', LeadChannel.agent, withReason),
+    ).toEqual([agentRequired]);
+    expect(
+      errorsFor(
+        { ...complete, whyLead: null },
+        'create',
+        LeadChannel.agent,
+        withReason,
+      ),
+    ).toEqual([agentRequired]);
+  });
+
+  it('keeps the reason on an agent lead and never lets it be cleared', () => {
+    const changes = parseLeadValues(
+      withReason,
+      { ...complete, whyLead: 'Asked for a POS this week.' },
+      'create',
+      LeadChannel.agent,
+    );
+
+    expect(changes.set.map(({ field }) => field.key)).toContain('whyLead');
+    expect(
+      errorsFor({ whyLead: null }, 'update', LeadChannel.agent, withReason),
+    ).toEqual([agentRequired]);
+  });
+
+  it('drops a reason a website still sends on a form lead', () => {
+    const changes = parseLeadValues(
+      withReason,
+      { ...complete, whyLead: 'Contact form on https://acme.example' },
+      'create',
+      LeadChannel.form,
+    );
+
+    expect(changes.set.map(({ field }) => field.key)).toEqual([
+      'candidate',
+      'product',
+      'source',
+    ]);
+    expect(errorsFor(complete, 'create', LeadChannel.form, withReason)).toEqual(
+      [],
+    );
+  });
+
+  it('refuses a reason typed onto a form lead, but lets one be cleared', () => {
+    expect(
+      errorsFor(
+        { whyLead: 'Looks keen' },
+        'update',
+        LeadChannel.form,
+        withReason,
+      ),
+    ).toEqual(['values.whyLead is only kept on agent leads']);
+
+    const changes = parseLeadValues(
+      withReason,
+      { whyLead: null },
+      'update',
+      LeadChannel.form,
+    );
+    expect(changes.clear.map((field) => field.key)).toEqual(['whyLead']);
   });
 });
 

@@ -14,11 +14,13 @@ import {
   OrgRoles,
   Session,
 } from '@thallesp/nestjs-better-auth';
+import type { LeadChannel } from '@prisma/client';
 
 import type { PaginatedResponse } from '../../common/responses/paginated-api.response';
 import { CurrentOrganizationId } from '../api-keys/decorators/current-organization-id.decorator';
 import { SessionOrApiKey } from '../api-keys/decorators/session-or-api-key.decorator';
 import type { OrganizationSession } from '../auth/types/auth.types';
+import { KeyLeadChannel } from './decorators/lead-channel.decorator';
 import { CreateLeadDTO } from './dto/create-lead.dto';
 import { FilterLeadsDTO } from './dto/filter-leads.dto';
 import { SetLeadArchivedDTO } from './dto/set-lead-archived.dto';
@@ -34,15 +36,16 @@ export class LeadsController {
   constructor(private readonly leadsService: LeadsService) {}
 
   // Machine callers only: an admin API key or an integration key replaces the
-  // browser session here.
+  // browser session here. The key also decides the channel.
   @AllowAnonymous()
   @UseGuards(LeadIntakeGuard)
   @Post()
   createLead(
     @Body() body: CreateLeadDTO,
     @CurrentOrganizationId() organizationId: string,
+    @KeyLeadChannel() channel: LeadChannel,
   ): Promise<OrganizationLead> {
-    return this.leadsService.createLead(organizationId, body);
+    return this.leadsService.createLead(organizationId, channel, body);
   }
 
   // Agents read with their API key too, so they can look up a lead before filing

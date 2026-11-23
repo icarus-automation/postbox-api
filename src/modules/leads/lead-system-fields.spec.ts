@@ -32,9 +32,11 @@ describe('provisionLeadSystemFields', () => {
       'whyLead',
       'status',
       'receivedAt',
+      'email',
+      'phone',
     ]);
     expect(provisioned.map((field) => field.position)).toEqual([
-      0, 1, 2, 3, 4, 5, 6,
+      0, 1, 2, 3, 4, 5, 6, 7, 8,
     ]);
     for (const field of provisioned) {
       expect(field).toEqual(
@@ -56,6 +58,25 @@ describe('provisionLeadSystemFields', () => {
       'Why this is a lead',
       'Status',
       'Received',
+      'Email',
+      'Phone',
+    ]);
+  });
+
+  it('leaves whyLead to the channel, and email and phone optional', () => {
+    const optional = provisioned.filter((field) =>
+      ['whyLead', 'email', 'phone'].includes(field.key),
+    );
+
+    expect(optional.map((field) => field.isRequired ?? false)).toEqual([
+      false,
+      false,
+      false,
+    ]);
+    expect(optional.map((field) => field.type)).toEqual([
+      FieldType.long_text,
+      FieldType.text,
+      FieldType.text,
     ]);
   });
 

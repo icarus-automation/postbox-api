@@ -1,4 +1,5 @@
 import { NotFoundException } from '@nestjs/common';
+import { LeadChannel } from '@prisma/client';
 import { mock, mockReset } from 'jest-mock-extended';
 
 import { SessionOrApiKeyGuard } from '../api-keys/guards/session-or-api-key.guard';
@@ -31,10 +32,14 @@ describe('LeadsController', () => {
     mockReset(leadsService);
   });
 
-  it('files a machine-created lead under the key organization', async () => {
-    await controller.createLead(body, 'organization-b');
+  it('files a machine-created lead under the key organization and channel', async () => {
+    await controller.createLead(body, 'organization-b', LeadChannel.agent);
 
-    expect(leadsService.createLead).toHaveBeenCalledWith('organization-b', body);
+    expect(leadsService.createLead).toHaveBeenCalledWith(
+      'organization-b',
+      LeadChannel.agent,
+      body,
+    );
   });
 
   it('lets an integration key file a lead but never read the list', () => {

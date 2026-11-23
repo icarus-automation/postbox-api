@@ -21,6 +21,28 @@ const leadFields = [
     position: 0,
   },
   {
+    id: 'field-why-lead',
+    key: 'whyLead',
+    label: 'Why this is a lead',
+    type: FieldType.long_text,
+    options: [],
+    isRequired: false,
+    isReadOnly: false,
+    isSystem: true,
+    position: 1,
+  },
+  {
+    id: 'field-email',
+    key: 'email',
+    label: 'Email',
+    type: FieldType.text,
+    options: [],
+    isRequired: false,
+    isReadOnly: false,
+    isSystem: true,
+    position: 2,
+  },
+  {
     id: 'field-status',
     key: 'status',
     label: 'Status',
@@ -29,9 +51,11 @@ const leadFields = [
     isRequired: false,
     isReadOnly: true,
     isSystem: true,
-    position: 1,
+    position: 3,
   },
 ];
+
+const AGENT_REASON = 'Asked for a POS in a group post.';
 
 const INTEGRATION_KEY = 'pbi_e2e-key';
 
@@ -45,6 +69,8 @@ describe('Application authentication (e2e)', () => {
   const leadCount = jest.fn();
   const leadFindMany = jest.fn();
   const leadFindFirst = jest.fn();
+  const leadUpdate = jest.fn();
+  const queryRaw = jest.fn();
   const integrationKeyFindFirst = jest.fn();
   const postCount = jest.fn();
   const postFindMany = jest.fn();
@@ -67,7 +93,9 @@ describe('Application authentication (e2e)', () => {
           count: leadCount,
           findMany: leadFindMany,
           findFirst: leadFindFirst,
+          update: leadUpdate,
         },
+        $queryRaw: queryRaw,
         integrationKey: { findFirst: integrationKeyFindFirst },
         post: {
           count: postCount,
@@ -108,6 +136,10 @@ describe('Application authentication (e2e)', () => {
     leadFindMany.mockReset();
     leadFindMany.mockResolvedValue([]);
     leadFindFirst.mockReset();
+    leadUpdate.mockReset();
+    // No lead shares the email or phone unless a test says so.
+    queryRaw.mockReset();
+    queryRaw.mockResolvedValue([]);
     // Holds INTEGRATION_KEY for the organization with the slug acme and no other key.
     integrationKeyFindFirst.mockReset();
     integrationKeyFindFirst.mockImplementation(
@@ -168,9 +200,11 @@ describe('Application authentication (e2e)', () => {
     const createdAt = new Date('2026-09-13T10:00:00.000Z');
     leadFindFirst.mockResolvedValue({
       id: 'lead-a',
+      channel: 'form',
       createdAt,
       updatedAt: createdAt,
       values: [{ fieldId: 'field-status', value: 'new' }],
+      submissions: [],
     });
 
     await request(app.getHttpServer())
@@ -275,7 +309,9 @@ describe('Application authentication (e2e)', () => {
     const response = await request(app.getHttpServer())
       .post('/api/v1/leads')
       .set('x-api-key', 'cms_valid')
-      .send({ values: { candidate: 'Dana Reyes', budget: 5000 } })
+      .send({
+        values: { candidate: 'Dana Reyes', whyLead: AGENT_REASON, budget: 5000 },
+      })
       .expect(400);
 
     expect((response.body as { message: string[] }).message).toEqual([
@@ -289,23 +325,34 @@ describe('Application authentication (e2e)', () => {
     const createdAt = new Date('2026-09-13T10:00:00.000Z');
     leadCreate.mockResolvedValue({
       id: 'lead-a',
+      channel: 'agent',
       createdAt,
       updatedAt: createdAt,
       values: [
         { fieldId: 'field-candidate', value: 'Dana Reyes' },
+        { fieldId: 'field-why-lead', value: AGENT_REASON },
         { fieldId: 'field-status', value: 'new' },
       ],
+      submissions: [],
     });
 
     const response = await request(app.getHttpServer())
       .post('/api/v1/leads')
       .set('x-api-key', 'cms_valid')
-      .send({ values: { candidate: 'Dana Reyes' } })
+      .send({ values: { candidate: 'Dana Reyes', whyLead: AGENT_REASON } })
       .expect(201);
 
     expect(response.body).toEqual({
       id: 'lead-a',
-      values: { candidate: 'Dana Reyes', status: 'new' },
+      channel: 'agent',
+      nowInbound: false,
+      values: {
+        candidate: 'Dana Reyes',
+        whyLead: AGENT_REASON,
+        email: null,
+        status: 'new',
+      },
+      submissions: [],
       createdAt: createdAt.toISOString(),
       updatedAt: createdAt.toISOString(),
     });
@@ -416,6 +463,51 @@ describe('Application authentication (e2e)', () => {
         where: { organizationId: 'organization-a', isArchived: true },
       }),
     );
+  });
+
+  it('lists leads by channel, with inbound taking in prospects that sent the form', async () => {
+    acceptApiKey();
+
+    await request(app.getHttpServer())
+      .get('/api/v1/leads')
+      .query({ channel: 'form' })
+      .set('x-api-key', 'cms_valid')
+      .expect(200);
+    await request(app.getHttpServer())
+      .get('/api/v1/leads')
+      .query({ channel: 'agent' })
+      .set('x-api-key', 'cms_valid')
+      .expect(200);
+    await request(app.getHttpServer())
+      .get('/api/v1/leads')
+      .query({ channel: 'email' })
+      .set('x-api-key', 'cms_valid')
+      .expect(400);
+
+    expect(leadFindMany).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        where: {
+          organizationId: 'organization-a',
+          isArchived: false,
+          OR: [
+            { channel: 'form' },
+            { submissions: { some: { channel: 'form' } } },
+          ],
+        },
+      }),
+    );
+    expect(leadFindMany).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        where: {
+          organizationId: 'organization-a',
+          isArchived: false,
+          channel: 'agent',
+        },
+      }),
+    );
+    expect(leadFindMany).toHaveBeenCalledTimes(2);
   });
 
   it('refuses an archived filter that is not true or false', async () => {
@@ -732,15 +824,17 @@ describe('Application authentication (e2e)', () => {
     const createdAt = new Date('2026-10-25T10:00:00.000Z');
     const values = { candidate: 'Dana Reyes' };
 
-    function storeLead(): void {
+    function storeLead(channel: 'form' | 'agent' = 'form'): void {
       leadCreate.mockResolvedValue({
         id: 'lead-a',
+        channel,
         createdAt,
         updatedAt: createdAt,
         values: [
           { fieldId: 'field-candidate', value: 'Dana Reyes' },
           { fieldId: 'field-status', value: 'new' },
         ],
+        submissions: [],
       });
     }
 
@@ -773,7 +867,15 @@ describe('Application authentication (e2e)', () => {
 
       expect(response.body).toEqual({
         id: 'lead-a',
-        values: { candidate: 'Dana Reyes', status: 'new' },
+        channel: 'form',
+        nowInbound: false,
+        values: {
+          candidate: 'Dana Reyes',
+          whyLead: null,
+          email: null,
+          status: 'new',
+        },
+        submissions: [],
         createdAt: createdAt.toISOString(),
         updatedAt: createdAt.toISOString(),
       });
@@ -782,12 +884,12 @@ describe('Application authentication (e2e)', () => {
 
     it('still files a lead for an admin API key beside it', async () => {
       acceptApiKey();
-      storeLead();
+      storeLead('agent');
 
       await request(app.getHttpServer())
         .post('/api/v1/leads')
         .set('x-api-key', 'cms_valid')
-        .send({ values })
+        .send({ values: { ...values, whyLead: AGENT_REASON } })
         .expect(201);
 
       expect(verifyApiKey).toHaveBeenCalled();
@@ -830,6 +932,128 @@ describe('Application authentication (e2e)', () => {
         'values.candidate is required',
       ]);
       expect(leadCreate).not.toHaveBeenCalled();
+    });
+
+    it('files a form lead for the integration key, whatever channel the body names', async () => {
+      storeLead();
+
+      await request(app.getHttpServer())
+        .post('/api/v1/leads')
+        .set('x-integration-key', INTEGRATION_KEY)
+        .send({ channel: 'agent', values })
+        .expect(201);
+      await request(app.getHttpServer())
+        .post('/api/v1/public/acme/leads')
+        .set('x-integration-key', INTEGRATION_KEY)
+        .send({ channel: 'agent', values })
+        .expect(201);
+
+      expect(leadCreate).toHaveBeenCalledTimes(2);
+      for (const [args] of leadCreate.mock.calls as [{ data: { channel: string } }][]) {
+        expect(args.data.channel).toBe('form');
+      }
+    });
+
+    it('files an agent lead for an admin API key, whatever channel the body names', async () => {
+      acceptApiKey();
+      storeLead('agent');
+
+      await request(app.getHttpServer())
+        .post('/api/v1/leads')
+        .set('x-api-key', 'cms_valid')
+        .send({ channel: 'form', values: { ...values, whyLead: AGENT_REASON } })
+        .expect(201);
+
+      expect(leadCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ channel: 'agent' }) as unknown,
+        }),
+      );
+    });
+
+    it('refuses an admin API key lead without a reason, saying why', async () => {
+      acceptApiKey();
+
+      const response = await request(app.getHttpServer())
+        .post('/api/v1/leads')
+        .set('x-api-key', 'cms_valid')
+        .send({ values })
+        .expect(400);
+
+      expect((response.body as { message: string[] }).message).toEqual([
+        'values.whyLead is required on agent leads, which an admin API key files',
+      ]);
+      expect(leadCreate).not.toHaveBeenCalled();
+    });
+
+    it('drops the boilerplate reason a website form still sends', async () => {
+      storeLead();
+
+      await request(app.getHttpServer())
+        .post('/api/v1/public/acme/leads')
+        .set('x-integration-key', INTEGRATION_KEY)
+        .send({
+          values: { ...values, whyLead: 'Contact form on https://acme.example' },
+        })
+        .expect(201);
+
+      const [[args]] = leadCreate.mock.calls as [
+        { data: { values: { create: { fieldId: string }[] } } },
+      ][];
+      expect(args.data.values.create.map(({ fieldId }) => fieldId)).toEqual([
+        'field-candidate',
+        'field-status',
+      ]);
+    });
+
+    it('attaches a repeat by email to the lead it matches, and flags a prospect now inbound', async () => {
+      queryRaw.mockResolvedValue([{ id: 'lead-a', channel: 'agent' }]);
+      leadUpdate.mockResolvedValue({
+        id: 'lead-a',
+        channel: 'agent',
+        isArchived: false,
+        createdAt,
+        updatedAt: createdAt,
+        values: [
+          { fieldId: 'field-candidate', value: 'Dana Reyes' },
+          { fieldId: 'field-email', value: 'dana@acme.example' },
+          { fieldId: 'field-status', value: 'new' },
+        ],
+        submissions: [
+          {
+            id: 'submission-a',
+            channel: 'form',
+            values: { candidate: 'Dana Reyes', email: 'Dana@Acme.example' },
+            createdAt,
+          },
+        ],
+      });
+
+      const response = await request(app.getHttpServer())
+        .post('/api/v1/leads')
+        .set('x-integration-key', INTEGRATION_KEY)
+        .send({ values: { ...values, email: 'Dana@Acme.example' } })
+        .expect(201);
+
+      expect(leadCreate).not.toHaveBeenCalled();
+      expect(leadUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'lead-a' } }),
+      );
+      expect(response.body).toEqual(
+        expect.objectContaining({
+          id: 'lead-a',
+          channel: 'agent',
+          nowInbound: true,
+          submissions: [
+            {
+              id: 'submission-a',
+              channel: 'form',
+              values: { candidate: 'Dana Reyes', email: 'Dana@Acme.example' },
+              createdAt: createdAt.toISOString(),
+            },
+          ],
+        }),
+      );
     });
 
     it('turns the key away from every lead read with a 403', async () => {

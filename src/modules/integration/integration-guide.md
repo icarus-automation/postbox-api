@@ -17,7 +17,7 @@ It cannot read leads, create drafts, publish or change anything else. A route th
 
 Owners and admins see the key on the Developers page and in Settings, Integration key. Rotating it there makes the old key stop working at once, so update every site that uses it.
 
-**Admin API keys.** They start with `cms_` and go in the `x-api-key` header. Agents and servers use them to file drafts and read leads. They are made in Settings, Advanced. Never put one in website code. A website does not need one.
+**Admin API keys.** They start with `cms_` and go in the `x-api-key` header. Agents and servers use them to file drafts and read leads. A lead filed with one is an agent lead and must carry `whyLead`. They are made in Settings, Advanced. Never put one in website code. A website does not need one.
 
 ## 2. Conventions
 
@@ -200,6 +200,8 @@ Copy this and adjust it to the site.
 
 The body is `{ "values": { "<field key>": <value> } }`. The answer is `201` with `{ "id": "..." }`. A new lead has the status `new`. Only people in Postbox move it along.
 
+Every lead sent with the integration key is a form lead. Postbox sets that from the key, so a `channel` in the body changes nothing.
+
 ```bash
 curl -X POST "{{apiBaseUrl}}/public/acme-inc/leads" \
   -H "x-integration-key: $POSTBOX_INTEGRATION_KEY" \
@@ -210,7 +212,8 @@ curl -X POST "{{apiBaseUrl}}/public/acme-inc/leads" \
       "product": "POS",
       "source": "https://acme.example/contact",
       "signal": "I would like a demo for our three cafes.",
-      "whyLead": "Contact form on the website"
+      "email": "dana@acme.example",
+      "phone": "+63 917 123 4567"
     }
   }'
 ```
@@ -223,7 +226,11 @@ Every organization starts with these fields. Required means the call fails witho
 | `product` | select | yes | `POS`, `PMS` or `Other`. |
 | `source` | url | yes | An `http` or `https` address, such as the page with the form. |
 | `signal` | long text | yes | What they said. Up to 5000 characters. |
-| `whyLead` | long text | yes | Why this counts as a lead. Up to 5000 characters. |
+| `email` | text | no | How to reach them. Up to 500 characters. |
+| `phone` | text | no | How to reach them. Up to 500 characters. |
+| `whyLead` | long text | no | Leave it out. It is for leads agents find, and a form lead drops it. |
+
+Send `email` or `phone` whenever the form has them. When either one matches a lead already in the inbox, Postbox adds the submission to that lead instead of making a second one, and the answer carries that lead's id. Email matches in any case, and phone on its digits alone.
 
 `status` and `receivedAt` are read-only and are refused if sent. The owner can add custom fields in Settings, Lead fields. Their keys work the same way, and a required one must be sent. Types are text (up to 500 characters), long text (up to 5000), number (a JSON number), select (one of its options), url and date (`YYYY-MM-DD`).
 

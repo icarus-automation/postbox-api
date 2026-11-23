@@ -1,7 +1,8 @@
 import { BadRequestException } from '@nestjs/common';
-import { FieldType } from '@prisma/client';
+import { FieldType, LeadChannel } from '@prisma/client';
 import { isISO8601, isURL } from 'class-validator';
 
+import { LEAD_WHY_KEY } from './lead-system-fields';
 import type { LeadField, LeadFieldValue } from './types/leads.types';
 
 const TEXT_MAX_LENGTH = 500;
@@ -62,14 +63,34 @@ function describeInvalidValue(field: LeadField, value: unknown): string | null {
   }
 }
 
+const AGENT_REASON_REQUIRED = `values.${LEAD_WHY_KEY} is required on agent leads, which an admin API key files`;
+const FORM_REASON_REFUSED = `values.${LEAD_WHY_KEY} is only kept on agent leads`;
+
+// The reason a lead is worth a message belongs to agent leads. The channel, not
+// the field definition, says whether it is required.
+function isRequiredOn(field: LeadField, channel: LeadChannel): boolean {
+  return field.key === LEAD_WHY_KEY
+    ? channel === LeadChannel.agent
+    : field.isRequired;
+}
+
+function requiredMessage(field: LeadField): string {
+  return field.key === LEAD_WHY_KEY
+    ? AGENT_REASON_REQUIRED
+    : `values.${field.key} is required`;
+}
+
 // Checks a values payload against the organization's lead fields and collects
 // every problem into one 400. Unknown and read-only keys are refused. On create a
 // null counts as absent and every required field must be given. On update only
-// the given keys change, and null clears a value.
+// the given keys change, and null clears a value. `channel` is the lead's: a
+// form lead never keeps whyLead, so a website that still sends it on create has
+// it dropped, and a person cannot type one in later.
 export function parseLeadValues(
   fields: LeadField[],
   input: Record<string, unknown>,
   mode: 'create' | 'update',
+  channel: LeadChannel,
 ): LeadValueChanges {
   const fieldsByKey = new Map(fields.map((field) => [field.key, field]));
   const changes: LeadValueChanges = { set: [], clear: [] };
@@ -83,8 +104,10 @@ export function parseLeadValues(
     } else if (field.isReadOnly) {
       errors.push(`values.${key} is read-only`);
     } else if (value === null) {
-      if (field.isRequired) errors.push(`values.${key} is required`);
+      if (isRequiredOn(field, channel)) errors.push(requiredMessage(field));
       else if (mode === 'update') changes.clear.push(field);
+    } else if (key === LEAD_WHY_KEY && channel === LeadChannel.form) {
+      if (mode === 'update') errors.push(FORM_REASON_REFUSED);
     } else {
       const problem = describeInvalidValue(field, value);
 
@@ -95,8 +118,8 @@ export function parseLeadValues(
 
   if (mode === 'create') {
     for (const field of fields) {
-      if (field.isRequired && !Object.hasOwn(input, field.key)) {
-        errors.push(`values.${field.key} is required`);
+      if (isRequiredOn(field, channel) && !Object.hasOwn(input, field.key)) {
+        errors.push(requiredMessage(field));
       }
     }
   }

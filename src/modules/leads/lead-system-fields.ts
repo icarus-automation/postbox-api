@@ -12,6 +12,12 @@ export const LEAD_INITIAL_STATUS: LeadStatus = 'new';
 
 export const LEAD_STATUS_KEY = 'status';
 export const LEAD_RECEIVED_AT_KEY = 'receivedAt';
+// Agent leads must carry it and form leads never keep it, so the channel decides
+// whether it is required rather than the field definition.
+export const LEAD_WHY_KEY = 'whyLead';
+// A new lead that shares either one with a lead in the inbox is attached to it.
+export const LEAD_EMAIL_KEY = 'email';
+export const LEAD_PHONE_KEY = 'phone';
 
 type LeadSystemField = {
   key: string;
@@ -48,10 +54,9 @@ const LEAD_SYSTEM_FIELDS: LeadSystemField[] = [
     isRequired: true,
   },
   {
-    key: 'whyLead',
+    key: LEAD_WHY_KEY,
     label: 'Why this is a lead',
     type: FieldType.long_text,
-    isRequired: true,
   },
   {
     key: LEAD_STATUS_KEY,
@@ -66,6 +71,8 @@ const LEAD_SYSTEM_FIELDS: LeadSystemField[] = [
     type: FieldType.datetime,
     isReadOnly: true,
   },
+  { key: LEAD_EMAIL_KEY, label: 'Email', type: FieldType.text },
+  { key: LEAD_PHONE_KEY, label: 'Phone', type: FieldType.text },
 ];
 
 export async function provisionLeadSystemFields(

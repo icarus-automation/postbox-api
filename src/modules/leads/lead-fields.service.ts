@@ -12,6 +12,7 @@ import {
 import { PrismaService } from '../../core/database/prisma.service';
 import type { CreateLeadFieldDTO } from './dto/create-lead-field.dto';
 import type { UpdateLeadFieldDTO } from './dto/update-lead-field.dto';
+import { LEAD_WHY_KEY } from './lead-system-fields';
 import type { LeadField } from './types/leads.types';
 
 const LEAD_FIELD_SELECT = {
@@ -108,6 +109,15 @@ export class LeadFieldsService {
     }
     if (body.options !== undefined && field.type !== FieldType.select) {
       throw new BadRequestException([OPTIONS_ON_NON_SELECT_MESSAGE]);
+    }
+    if (
+      field.isSystem &&
+      field.key === LEAD_WHY_KEY &&
+      body.isRequired !== undefined
+    ) {
+      throw new BadRequestException([
+        `${field.key} is required on agent leads and never kept on form leads, so its required flag cannot change`,
+      ]);
     }
 
     return this.prisma.fieldDefinition.update({

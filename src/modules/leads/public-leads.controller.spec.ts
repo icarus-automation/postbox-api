@@ -1,3 +1,4 @@
+import { LeadChannel } from '@prisma/client';
 import { mock, mockReset } from 'jest-mock-extended';
 
 import type { CreateLeadDTO } from './dto/create-lead.dto';
@@ -23,18 +24,25 @@ describe('PublicLeadsController', () => {
     mockReset(leadsService);
   });
 
-  it('files the lead under the organization of the integration key', async () => {
+  it('files a form lead under the organization of the integration key', async () => {
     leadsService.createLead.mockResolvedValue({ id: 'lead-a' } as OrganizationLead);
 
     await controller.submitLead(body, 'organization-a');
 
-    expect(leadsService.createLead).toHaveBeenCalledWith('organization-a', body);
+    expect(leadsService.createLead).toHaveBeenCalledWith(
+      'organization-a',
+      LeadChannel.form,
+      body,
+    );
   });
 
   it('answers with the id and nothing else of the lead', async () => {
     leadsService.createLead.mockResolvedValue({
       id: 'lead-a',
-      values: { candidate: 'Dana Reyes', status: 'new', whyLead: 'Contact form' },
+      channel: LeadChannel.form,
+      nowInbound: false,
+      values: { candidate: 'Dana Reyes', status: 'new', email: 'dana@acme.example' },
+      submissions: [],
       isArchived: false,
       createdAt: new Date('2026-10-25T00:00:00.000Z'),
       updatedAt: new Date('2026-10-25T00:00:00.000Z'),

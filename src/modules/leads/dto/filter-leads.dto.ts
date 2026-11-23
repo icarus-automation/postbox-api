@@ -1,5 +1,13 @@
+import { LeadChannel } from '@prisma/client';
 import { Transform } from 'class-transformer';
-import { IsBoolean, IsIn, IsOptional, Length, ValidateIf } from 'class-validator';
+import {
+  IsBoolean,
+  IsEnum,
+  IsIn,
+  IsOptional,
+  Length,
+  ValidateIf,
+} from 'class-validator';
 
 import { PaginationQueryDTO } from '../../../common/dto/pagination-query.dto';
 import { LEAD_STATUSES, type LeadStatus } from '../lead-system-fields';
@@ -21,6 +29,13 @@ export class FilterLeadsDTO extends PaginationQueryDTO {
   @IsOptional()
   @IsIn(LEAD_STATUSES)
   status?: LeadStatus;
+
+  // form lists the leads that came in through the website form, including agent
+  // leads whose person has since sent it. agent lists the leads agents found.
+  // Without it, both.
+  @IsOptional()
+  @IsEnum(LeadChannel)
+  channel?: LeadChannel;
 
   // The inbox and the archive are separate lists, so this picks one of them.
   @Transform(toBoolean)

@@ -1,5 +1,6 @@
 import { Body, Controller, Post, UseGuards } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
+import { LeadChannel } from '@prisma/client';
 import { AllowAnonymous } from '@thallesp/nestjs-better-auth';
 
 import { CurrentOrganizationId } from '../api-keys/decorators/current-organization-id.decorator';
@@ -8,8 +9,9 @@ import { CreateLeadDTO } from './dto/create-lead.dto';
 import { LeadsService } from './leads.service';
 
 // A website files a lead here with its integration key, straight from the
-// browser if it likes. Only the id comes back: the lead itself lists every field
-// key the organization has, and a form has no use for them.
+// browser if it likes, so every lead from this route is a form lead. Only the id
+// comes back: the lead itself lists every field key the organization has, and a
+// form has no use for them.
 @AllowAnonymous()
 @UseGuards(IntegrationKeyGuard)
 // Open to any visitor of any site, so a tighter cap than the rest of the API.
@@ -23,7 +25,11 @@ export class PublicLeadsController {
     @Body() body: CreateLeadDTO,
     @CurrentOrganizationId() organizationId: string,
   ): Promise<{ id: string }> {
-    const lead = await this.leadsService.createLead(organizationId, body);
+    const lead = await this.leadsService.createLead(
+      organizationId,
+      LeadChannel.form,
+      body,
+    );
     return { id: lead.id };
   }
 }
