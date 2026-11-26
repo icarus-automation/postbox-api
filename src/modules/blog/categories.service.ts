@@ -1,9 +1,10 @@
-import { ConflictException, Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 
-import type { UniqueConstraint } from '../../core/database/prisma-errors';
+import { isUniqueConstraintViolation, type UniqueConstraint } from '../../core/database/prisma-errors';
 import { PrismaService } from '../../core/database/prisma.service';
 import type { PublishedTerm, Slug, TermJson } from './document/blog.types';
+import { SLUG_MAX_LENGTH, SLUG_PATTERN } from './document/slugs';
 import type { CreateCategoryDTO } from './dto/create-category.dto';
 import type { RenameCategoryDTO } from './dto/rename-category.dto';
 import { writeWithFreeSlug } from './free-slug';
@@ -40,7 +41,7 @@ export class CategoriesService {
   }
 
   // Typing a name that is already there picks that category, in any case,
-  // rather than making a second one.
+  // rather than making a second one. A slug on that call is ignored.
   async createCategory(organizationId: string, body: CreateCategoryDTO): Promise<TermJson> {
     const name = termName(body.name);
     const existing = await this.prisma.category.findFirst({
@@ -48,6 +49,11 @@ export class CategoriesService {
       select: CATEGORY_SELECT,
     });
     if (existing) return toTermJson(existing);
+    const explicit = chosenCategorySlug(body.slug);
+    if (explicit) {
+      await this.assertSlugAvailable(organizationId, explicit, null);
+      return toTermJson(await this.insertCategory(organizationId, name, explicit));
+    }
     const row = await this.withFreeSlug(organizationId, termSlug(name), null, (slug) =>
       this.prisma.category.create({
         data: { organizationId, name, slug },
@@ -57,7 +63,7 @@ export class CategoriesService {
     return toTermJson(row);
   }
 
-  // The slug is made from the name again, so it moves with a rename.
+  // The slug stays until a write sets a new one. A rename of the name leaves it.
   async renameCategory(
     organizationId: string,
     id: string,
@@ -66,23 +72,21 @@ export class CategoriesService {
     const current = await this.findCategory(organizationId, id);
     if (!current) return null;
     const name = termName(body.name);
-    if (name === current.name) return toTermJson(current);
-    const clash = await this.prisma.category.findFirst({
-      where: {
-        organizationId,
-        id: { not: id },
-        name: { equals: name, mode: 'insensitive' },
-      },
-      select: { id: true },
-    });
-    if (clash) throw new ConflictException(`Another category is already called ${name}`);
-    const row = await this.withFreeSlug(organizationId, termSlug(name), id, (slug) =>
-      this.prisma.category.update({
-        where: { id },
-        data: { name, slug },
-        select: CATEGORY_SELECT,
-      }),
-    );
+    const slug = chosenCategorySlug(body.slug) ?? (current.slug as Slug);
+    if (name === current.name && slug === current.slug) return toTermJson(current);
+    if (name !== current.name) {
+      const clash = await this.prisma.category.findFirst({
+        where: {
+          organizationId,
+          id: { not: id },
+          name: { equals: name, mode: 'insensitive' },
+        },
+        select: { id: true },
+      });
+      if (clash) throw new ConflictException(`Another category is already called ${name}`);
+    }
+    if (slug !== current.slug) await this.assertSlugAvailable(organizationId, slug, id);
+    const row = await this.updateCategory(id, name, slug);
     this.posts.announceUpdatedPosts(organizationId, await this.publishedPostIds(organizationId, id));
     return toTermJson(row);
   }
@@ -127,6 +131,51 @@ export class CategoriesService {
     return rows.map((row) => row.id);
   }
 
+  private async insertCategory(organizationId: string, name: string, slug: Slug) {
+    try {
+      return await this.prisma.category.create({
+        data: { organizationId, name, slug },
+        select: CATEGORY_SELECT,
+      });
+    } catch (error) {
+      if (isUniqueConstraintViolation(error, CATEGORY_SLUG_CONSTRAINT)) {
+        throw new ConflictException(`Another category already uses ${slug}`);
+      }
+      throw error;
+    }
+  }
+
+  private async updateCategory(id: string, name: string, slug: Slug) {
+    try {
+      return await this.prisma.category.update({
+        where: { id },
+        data: { name, slug },
+        select: CATEGORY_SELECT,
+      });
+    } catch (error) {
+      if (isUniqueConstraintViolation(error, CATEGORY_SLUG_CONSTRAINT)) {
+        throw new ConflictException(`Another category already uses ${slug}`);
+      }
+      throw error;
+    }
+  }
+
+  private async assertSlugAvailable(
+    organizationId: string,
+    slug: string,
+    exceptId: string | null,
+  ): Promise<void> {
+    const clash = await this.prisma.category.findFirst({
+      where: {
+        organizationId,
+        slug,
+        ...(exceptId ? { id: { not: exceptId } } : {}),
+      },
+      select: { id: true },
+    });
+    if (clash) throw new ConflictException(`Another category already uses ${slug}`);
+  }
+
   private withFreeSlug<T>(
     organizationId: string,
     wanted: Slug,
@@ -150,4 +199,14 @@ export class CategoriesService {
       write,
     });
   }
+}
+
+function chosenCategorySlug(slug: string | undefined): Slug | undefined {
+  if (slug === undefined) return undefined;
+  const trimmed = slug.trim();
+  if (trimmed.length === 0) return undefined;
+  if (!SLUG_PATTERN.test(trimmed) || trimmed.length > SLUG_MAX_LENGTH) {
+    throw new BadRequestException('Slug is invalid');
+  }
+  return trimmed as Slug;
 }

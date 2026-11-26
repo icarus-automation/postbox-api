@@ -42,6 +42,7 @@ export type ProseInline = ProseText | { type: 'hardBreak' };
 
 export type ProseBlock =
   | { type: 'paragraph'; content?: ProseInline[] }
+  | { type: 'heading'; level: HeadingLevel; content?: ProseInline[] }
   | { type: 'blockquote'; content: ProseBlock[] }
   | { type: 'bulletList'; content: ProseListItem[] }
   | { type: 'orderedList'; content: ProseListItem[] };
@@ -76,8 +77,11 @@ export type Block =
       doc: ProseDoc;
       html: SanitizedHtml;
     }
-  | { id: BlockId; kind: 'heading'; level: HeadingLevel; text: string }
+  | { id: BlockId; kind: 'heading'; level: HeadingLevel; text: string; anchor: string }
   | { id: BlockId; kind: 'divider' };
+
+/** One heading in a post, in the order the html and the markdown carry it. */
+export type PostHeading = { level: HeadingLevel; text: string; id: string };
 
 export type Publication =
   | { status: 'draft' }
@@ -135,6 +139,10 @@ export type PublicPost = {
   // The blocks above rendered as one sanitized string with stable pb-* classes.
   // A site renders either this or the blocks.
   html: SanitizedHtml;
+  // The same headings the html ids point at, in document order.
+  headings: PostHeading[];
+  // The blocks rendered as markdown. Heading ids stay in `headings` and `html`.
+  markdown: string;
 };
 
 export type PublishedPostSummary = {
@@ -165,13 +173,22 @@ export type EditorPostJson = {
   status: PostStatus;
   publishedAt: string | null;
   blocks: Block[];
+  headings: PostHeading[];
+  markdown: string;
   updatedAt: string;
 };
 
 /** A row of the post list: everything but the body. */
 export type PostSummaryJson = Omit<
   EditorPostJson,
-  'hasCustomSlug' | 'metaTitle' | 'metaDescription' | 'ogImage' | 'coverImage' | 'blocks'
+  | 'hasCustomSlug'
+  | 'metaTitle'
+  | 'metaDescription'
+  | 'ogImage'
+  | 'coverImage'
+  | 'blocks'
+  | 'headings'
+  | 'markdown'
 >;
 
 /** A category or a tag in the organization's own lists, counting drafts too. */
@@ -179,7 +196,7 @@ export type TermJson = TermRef & { postCount: number };
 
 export type WebhookType = 'post.published' | 'post.unpublished' | 'post.updated';
 
-export type WebhookPost = Omit<PublicPost, 'publishedAt'> & {
+export type WebhookPost = Omit<PublicPost, 'publishedAt' | 'headings' | 'markdown'> & {
   status: PostStatus;
   publishedAt: string | null;
 };

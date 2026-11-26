@@ -3,6 +3,7 @@ import Bold from '@tiptap/extension-bold';
 import BulletList from '@tiptap/extension-bullet-list';
 import Document from '@tiptap/extension-document';
 import HardBreak from '@tiptap/extension-hard-break';
+import Heading from '@tiptap/extension-heading';
 import Italic from '@tiptap/extension-italic';
 import Link from '@tiptap/extension-link';
 import ListItem from '@tiptap/extension-list-item';
@@ -11,7 +12,14 @@ import Paragraph from '@tiptap/extension-paragraph';
 import Text from '@tiptap/extension-text';
 import { MarkdownManager } from '@tiptap/markdown';
 
-import { DraftRejected, type HttpUrl, type ProseBlock, type ProseDoc, type ProseInline, type ProseMark } from './blog.types';
+import {
+  DraftRejected,
+  type HttpUrl,
+  type ProseBlock,
+  type ProseDoc,
+  type ProseInline,
+  type ProseMark,
+} from './blog.types';
 
 export const EMPTY_DOC: ProseDoc = { type: 'doc', content: [{ type: 'paragraph' }] };
 
@@ -31,6 +39,7 @@ const RICH_TEXT_EXTENSIONS = [
   ListItem,
   HardBreak,
   Blockquote,
+  Heading.configure({ levels: [1, 2, 3] }),
 ];
 
 const markdown = new MarkdownManager({ extensions: RICH_TEXT_EXTENSIONS });
@@ -96,6 +105,16 @@ function parseBlock(raw: unknown): ProseBlock {
     if (!Array.isArray(raw.content)) throw new DraftRejected('Rich text is invalid');
     return { type: 'paragraph', content: raw.content.map(parseInline) };
   }
+  if (raw.type === 'heading') {
+    const attrs = isRecord(raw.attrs) ? raw.attrs : {};
+    const level = attrs.level ?? raw.level;
+    if (level !== 1 && level !== 2 && level !== 3) {
+      throw new DraftRejected('Rich text is invalid');
+    }
+    if (raw.content === undefined) return { type: 'heading', level };
+    if (!Array.isArray(raw.content)) throw new DraftRejected('Rich text is invalid');
+    return { type: 'heading', level, content: raw.content.map(parseInline) };
+  }
   if (raw.type === 'blockquote') {
     if (!Array.isArray(raw.content)) throw new DraftRejected('Rich text is invalid');
     return { type: 'blockquote', content: raw.content.map(parseBlock) };
@@ -145,6 +164,10 @@ function renderBlock(block: ProseBlock): string {
   if (block.type === 'paragraph') {
     return `<p>${(block.content ?? []).map(renderInline).join('')}</p>`;
   }
+  if (block.type === 'heading') {
+    const inner = (block.content ?? []).map(renderInline).join('');
+    return `<h${block.level}>${inner}</h${block.level}>`;
+  }
   if (block.type === 'blockquote') {
     return `<blockquote>${block.content.map(renderBlock).join('')}</blockquote>`;
   }
@@ -157,4 +180,75 @@ function renderBlock(block: ProseBlock): string {
 
 export function renderProse(doc: ProseDoc): string {
   return doc.content.map(renderBlock).join('');
+}
+
+export function inlinePlainText(content: readonly ProseInline[] | undefined): string {
+  return (content ?? []).map((inline) => (inline.type === 'text' ? inline.text : '')).join('');
+}
+
+function escapeMarkdown(text: string): string {
+  return text.replace(/[\\`*_{}[\]]/g, (character) => `\\${character}`);
+}
+
+function renderMarkdownInline(inline: ProseInline): string {
+  if (inline.type === 'hardBreak') return '  \n';
+  let text = escapeMarkdown(inline.text);
+  const marks = inline.marks ?? [];
+  const isBold = marks.some((mark) => mark.type === 'bold');
+  const isItalic = marks.some((mark) => mark.type === 'italic');
+  const link = marks.find((mark) => mark.type === 'link');
+  if (isBold && isItalic) text = `***${text}***`;
+  else if (isBold) text = `**${text}**`;
+  else if (isItalic) text = `*${text}*`;
+  if (link && link.type === 'link') text = `[${text}](${link.href})`;
+  return text;
+}
+
+function renderMarkdownBlock(block: ProseBlock): string {
+  if (block.type === 'paragraph') {
+    return (block.content ?? []).map(renderMarkdownInline).join('');
+  }
+  if (block.type === 'heading') {
+    const text = escapeMarkdown(inlinePlainText(block.content));
+    return `${'#'.repeat(block.level)} ${text}`;
+  }
+  if (block.type === 'blockquote') {
+    const inner = block.content.map(renderMarkdownBlock).filter((part) => part.length > 0).join('\n\n');
+    return inner
+      .split('\n')
+      .map((line) => `> ${line}`)
+      .join('\n');
+  }
+  return renderMarkdownList(block.content, block.type === 'orderedList');
+}
+
+function renderMarkdownList(
+  items: { content: ProseBlock[] }[],
+  ordered: boolean,
+): string {
+  return items
+    .map((item, index) => {
+      const marker = ordered ? `${index + 1}.` : '-';
+      const inner = item.content
+        .map(renderMarkdownBlock)
+        .filter((part) => part.length > 0)
+        .join('\n\n');
+      const lines = inner.split('\n');
+      const pad = ' '.repeat(marker.length + 1);
+      const first = `${marker} ${lines[0] ?? ''}`;
+      const rest = lines
+        .slice(1)
+        .map((line) => (line.length === 0 ? '' : `${pad}${line}`))
+        .join('\n');
+      return rest.length > 0 ? `${first}\n${rest}` : first;
+    })
+    .join('\n');
+}
+
+/** The doc as markdown. Heading ids are not written here. */
+export function proseToMarkdown(doc: ProseDoc): string {
+  return doc.content
+    .map(renderMarkdownBlock)
+    .filter((part) => part.length > 0)
+    .join('\n\n');
 }
