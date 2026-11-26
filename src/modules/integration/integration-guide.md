@@ -117,11 +117,13 @@ curl -H "x-integration-key: $POSTBOX_INTEGRATION_KEY" \
       "html": "<p>We are <strong>hiring</strong>.</p>"
     }
   ],
-  "html": "<h2 class=\"pb-heading\">Open roles</h2>\n<div class=\"pb-rich-text\"><p>We are <strong>hiring</strong>.</p></div>"
+  "html": "<h2 id=\"open-roles\" class=\"pb-heading\">Open roles</h2>\n<div class=\"pb-rich-text\"><p>We are <strong>hiring</strong>.</p></div>",
+  "headings": [{ "level": 2, "text": "Open roles", "id": "open-roles" }],
+  "markdown": "## Open roles\n\nWe are **hiring**."
 }
 ```
 
-A slug that is a draft, unpublished or unknown gives `404`. `ogImage`, `coverImage` and `category` are `null` when the post has none. `metaTitle` and `metaDescription` can be empty strings.
+A slug that is a draft, unpublished or unknown gives `404`. `ogImage`, `coverImage` and `category` are `null` when the post has none. `metaTitle` and `metaDescription` can be empty strings. A summary from the list has no `blocks`, `html`, `headings` or `markdown`.
 
 ### List categories and tags
 
@@ -132,6 +134,8 @@ A slug that is a draft, unpublished or unknown gives `404`. `ogImage`, `coverIma
 ```
 
 Sorted by name. Only categories and tags with at least one published post appear, and `postCount` counts published posts. Use the `slug` as the `category` or `tag` filter above.
+
+A category slug stays the same when the category is renamed. It changes only when someone sets a new slug. Keep using the slug you already have in your URLs.
 
 ## 4. Blocks and the html field
 
@@ -149,7 +153,7 @@ A post body is an ordered list of `blocks`. The post also carries `html`, the sa
 | `media_text` | `side` (`image_left` or `image_right`), `image` (as above, or `null`), `heading` (text or `null`), `doc` and `html` |
 | `divider` | none |
 
-`doc` is a rich text tree: `{ "type": "doc", "content": [...] }` where each node is a `paragraph`, `blockquote`, `bulletList` or `orderedList`. Text nodes carry the marks `bold`, `italic` and `link` (`href`, http or https only), and a `hardBreak` node is a line break. The `html` beside a `doc` already has this rendered, so most sites never read `doc`.
+`doc` is a rich text tree: `{ "type": "doc", "content": [...] }` where each node is a `paragraph`, `heading`, `blockquote`, `bulletList` or `orderedList`. A `heading` node has `level` 1, 2 or 3. Text nodes carry the marks `bold`, `italic` and `link` (`href`, http or https only), and a `hardBreak` node is a line break. The `html` beside a `doc` already has this rendered, so most sites never read `doc`.
 
 ### The html field
 
@@ -157,13 +161,19 @@ Each block becomes one element with a stable class name: `pb-` plus the block ty
 
 | Block | Markup |
 | --- | --- |
-| `heading` | `<h1 class="pb-heading">`, `<h2 ...>` or `<h3 ...>` by `level` |
-| `rich_text` | `<div class="pb-rich-text">` holding `p`, `ul`, `ol`, `li`, `blockquote`, `strong`, `em`, `a` and `br` |
+| `heading` | `<h1 id="..." class="pb-heading">`, `<h2 ...>` or `<h3 ...>` by `level` |
+| `rich_text` | `<div class="pb-rich-text">` holding `p`, `h1`, `h2`, `h3`, `ul`, `ol`, `li`, `blockquote`, `strong`, `em`, `a` and `br` |
 | `image` | `<figure class="pb-image"><img src alt loading="lazy"></figure>`. An empty slot adds nothing. |
-| `media_text` | `<div class="pb-media-text pb-media-text--image-left">`, or `pb-media-text--image-right` in its place. Inside: `<figure class="pb-media-text__media">` with the image, then `<div class="pb-media-text__body">` with an optional `<h2 class="pb-media-text__heading">` and the text. With `image_right` the body comes first. The figure is left out when there is no image. |
+| `media_text` | `<div class="pb-media-text pb-media-text--image-left">`, or `pb-media-text--image-right` in its place. Inside: `<figure class="pb-media-text__media">` with the image, then `<div class="pb-media-text__body">` with an optional `<h2 id="..." class="pb-media-text__heading">` and the text. With `image_right` the body comes first. The figure is left out when there is no image. |
 | `divider` | `<hr class="pb-divider">` |
 
-The string is sanitized on the server. It holds only the elements above, only `pb-` classes, only `href` on links and `src`, `alt` and `loading` on images, and only `http` and `https` addresses. There are no inline styles, scripts or event attributes, so it is safe to inject as is (`innerHTML`, `dangerouslySetInnerHTML`, `v-html`).
+The string is sanitized on the server. It holds only the elements above, only `pb-` classes, only `href` on links, only `src`, `alt` and `loading` on images, and an `id` on `h1`, `h2` and `h3` only. Addresses are `http` and `https`. There are no inline styles, scripts or event attributes, so it is safe to inject as is (`innerHTML`, `dangerouslySetInnerHTML`, `v-html`).
+
+Every heading from level 1 to 3 has an `id`. The id follows github-slugger: lowercase, punctuation removed, spaces turned into hyphens. The same slug later in the same post gets `-1`, then `-2`, in document order. A heading block keeps the anchor it was given the first time it was saved, so editing the words does not move an existing link. Headings inside rich text and media text are slugged from their text on each read. The id on the page is that anchor, or the slug, unless an earlier heading in the post already took it. Link with the id from `html` or from `headings`, for example `/billing/utility-billing#readings`. Do not slug the heading text again on the site. After an edit, a fresh slug and the stored id can differ.
+
+`headings` is `{ level, text, id }` for each of those headings, in the same order as the ids in `html`.
+
+`markdown` is the same blocks as plain text. A heading block is `#`, `##` or `###`. Rich text keeps paragraphs, bold, italic, links, and ordered and bulleted lists, including a list inside a list. An image is `![alt](url)`. Media text is the image, then its heading, then its text. A divider is `---`. Heading ids are not written into the markdown. They come from `headings`, which follows the same order as the markdown headings.
 
 The class names are stable. New block kinds get new classes and the existing ones do not change.
 
@@ -240,7 +250,7 @@ Server code can also post the same body to `{{apiBaseUrl}}/leads` with the same 
 
 ## 7. Webhook
 
-Postbox calls one URL per organization when a post is published, unpublished, or changed while it is published. That includes a rename or delete of its category or a tag. Use it to refresh a cache.
+Postbox calls one URL per organization when a post is published, unpublished, or changed while it is published. That includes a rename or delete of its category or a tag, and a change of the category slug. Use it to refresh a cache.
 
 | `type` | When |
 | --- | --- |
@@ -277,7 +287,7 @@ X-Blog-Signature: sha256=<hex>
 }
 ```
 
-`post` has the fields of a post, plus `status`. For `post.unpublished`, `status` is `draft` and `publishedAt` is `null`.
+`post` has the fields of a public post except `headings` and `markdown`, plus `status`. `html` still carries the heading ids. For `post.unpublished`, `status` is `draft` and `publishedAt` is `null`.
 
 **Check the signature.** `X-Blog-Signature` is `sha256=` followed by the hex HMAC-SHA256 of the raw request body, keyed with the secret saved with the URL. Compute it over the raw text before parsing, and compare in constant time.
 
