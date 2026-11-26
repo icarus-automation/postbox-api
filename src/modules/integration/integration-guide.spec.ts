@@ -1,4 +1,4 @@
-import { renderBlocksHtml } from '../blog/document/block-registry';
+import { renderBlocksHtml } from '../blog/document/post-body';
 import type {
   HttpUrl,
   PublicBlock,

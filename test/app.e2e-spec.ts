@@ -7,6 +7,7 @@ import { App } from 'supertest/types';
 
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/core/database/prisma.service';
+import { utilityBillingBlocks } from './utility-billing.fixture';
 
 const leadFields = [
   {
@@ -689,16 +690,71 @@ describe('Application authentication (e2e)', () => {
       ]);
       expect(body.html).toBe(
         [
-          '<h2 class="pb-heading">Open &lt;roles&gt;</h2>',
+          '<h2 id="open-roles" class="pb-heading">Open &lt;roles&gt;</h2>',
           '<div class="pb-rich-text"><p>We are <strong>hiring</strong>.</p></div>',
           '<figure class="pb-image"><img src="https://media.example.com/team.png" alt="The &quot;team&quot; &lt;b&gt;photo&lt;/b&gt;" loading="lazy" /></figure>',
           '<div class="pb-media-text pb-media-text--image-left">' +
             '<figure class="pb-media-text__media"><img src="https://media.example.com/team.png" alt="The &quot;team&quot; &lt;b&gt;photo&lt;/b&gt;" loading="lazy" /></figure>' +
-            '<div class="pb-media-text__body"><h2 class="pb-media-text__heading">Why join us</h2><p>We are <strong>hiring</strong>.</p></div>' +
+            '<div class="pb-media-text__body"><h2 id="why-join-us" class="pb-media-text__heading">Why join us</h2><p>We are <strong>hiring</strong>.</p></div>' +
             '</div>',
           '<hr class="pb-divider" />',
         ].join('\n'),
       );
+    });
+
+    it('returns markdown and heading ids for a published post, and 404 for a draft slug', async () => {
+      postFindFirst.mockImplementation(
+        ({ where }: { where: { slug?: string; status?: string } }) => {
+          if (where.slug !== 'utility-billing' || where.status !== 'published') return Promise.resolve(null);
+          return Promise.resolve({
+            id: 'post-utility',
+            organizationId: 'organization-a',
+            title: 'Utility billing',
+            slug: 'utility-billing',
+            hasCustomSlug: true,
+            excerpt: '',
+            metaTitle: '',
+            metaDescription: '',
+            ogImage: null,
+            coverImage: null,
+            category: { id: 'category-billing', name: 'Billing', slug: 'billing' },
+            tags: [],
+            status: 'published',
+            publishedAt,
+            updatedAt: publishedAt,
+            blocks: utilityBillingBlocks(),
+          });
+        },
+      );
+
+      const response = await request(app.getHttpServer())
+        .get('/api/v1/public/acme/blog/posts/utility-billing')
+        .set('x-integration-key', INTEGRATION_KEY)
+        .expect(200);
+
+      const body = response.body as {
+        markdown: string;
+        html: string;
+        headings: Array<{ id: string; text: string; level: number }>;
+      };
+      const sections = body.markdown
+        .split('\n')
+        .filter((line) => line.startsWith('## ') && !line.startsWith('### '));
+      expect(sections).toHaveLength(8);
+      expect(sections).toContain('## Readings');
+      expect(body.html).toContain('id="readings"');
+      expect(body.html).toContain('id="readings-1"');
+      expect(body.markdown).toContain('1. Photograph the dials');
+      expect(body.markdown).toContain('   - Include the meter number');
+      expect(body.markdown).not.toMatch(/<\/?(p|strong|em|h[1-6]|ul|ol|li)\b/i);
+      expect(body.headings.map((heading) => heading.id)).toEqual(
+        [...body.html.matchAll(/<h[1-3]\b[^>]*id="([^"]+)"/gi)].map((match) => match[1]),
+      );
+
+      await request(app.getHttpServer())
+        .get('/api/v1/public/acme/blog/posts/still-a-draft')
+        .set('x-integration-key', INTEGRATION_KEY)
+        .expect(404);
     });
 
     it('answers 404 for a slug that is not published', async () => {

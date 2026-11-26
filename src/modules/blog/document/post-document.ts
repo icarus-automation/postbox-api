@@ -17,11 +17,11 @@ import {
 import {
   BLOCK_KINDS,
   parseBlocks,
-  renderBlocksHtml,
   toPublicBlocks,
   uuidV7,
   type MediaIndex,
 } from './block-registry';
+import { projectPostBody } from './post-body';
 import { EMPTY_DOC } from './rich-text.codec';
 import { SLUG_MAX_LENGTH, SLUG_PATTERN, slugify } from './slugs';
 
@@ -171,7 +171,7 @@ export function applyFields(
     coverImage: linkedImage(doc.coverImage, fields.coverImageId, refs.media),
     category: refs.category === undefined ? doc.category : refs.category,
     tags: refs.tags === undefined ? doc.tags : sortTerms(refs.tags),
-    blocks: fields.blocks === undefined ? doc.blocks : parseBlocks(fields.blocks, refs.media),
+    blocks: fields.blocks === undefined ? doc.blocks : parseBlocks(fields.blocks, refs.media, doc.blocks),
   };
 }
 
@@ -180,7 +180,10 @@ export function publicTerm(term: TermRef): PublicTerm {
 }
 
 // Everything a site reads except the rendered html, which is made from the blocks.
-function toPublicFields(doc: PostDocument): Omit<WebhookPost, 'html'> {
+function toPublicFields(
+  doc: PostDocument,
+  blocks: PostDocument['blocks'] = doc.blocks,
+): Omit<WebhookPost, 'html'> {
   const publishedAt =
     doc.publication.status === 'published'
       ? doc.publication.publishedAt.toISOString()
@@ -199,18 +202,20 @@ function toPublicFields(doc: PostDocument): Omit<WebhookPost, 'html'> {
     category: doc.category ? publicTerm(doc.category) : null,
     tags: doc.tags.map(publicTerm),
     publishedAt,
-    blocks: toPublicBlocks(doc.blocks),
+    blocks: toPublicBlocks(blocks),
   };
 }
 
 function toWebhookPost(doc: PostDocument): WebhookPost {
-  const post = toPublicFields(doc);
-  return { ...post, html: renderBlocksHtml(post.blocks) };
+  const body = projectPostBody(doc.blocks);
+  const post = toPublicFields(doc, body.blocks);
+  return { ...post, html: body.html };
 }
 
 // The html is left out: it follows from the blocks, so comparing them is enough.
 function canonicalPublic(doc: PostDocument): string {
   const post = toPublicFields(doc);
+  const body = projectPostBody(doc.blocks);
   return JSON.stringify({
     title: post.title,
     slug: post.slug,
@@ -222,6 +227,7 @@ function canonicalPublic(doc: PostDocument): string {
     category: post.category,
     tags: post.tags,
     blocks: post.blocks,
+    headings: body.headings,
   });
 }
 
@@ -251,6 +257,7 @@ export function toPublicPost(doc: PostDocument): PublicPost {
     throw new Error('A draft has no public post');
   }
   const post = toWebhookPost(doc);
+  const body = projectPostBody(doc.blocks);
   return {
     title: post.title,
     slug: post.slug,
@@ -264,10 +271,13 @@ export function toPublicPost(doc: PostDocument): PublicPost {
     publishedAt: doc.publication.publishedAt.toISOString(),
     blocks: post.blocks,
     html: post.html,
+    headings: body.headings,
+    markdown: body.markdown,
   };
 }
 
 export function toEditorJson(doc: PostDocument): EditorPostJson {
+  const body = projectPostBody(doc.blocks);
   return {
     id: doc.id,
     title: doc.title,
@@ -285,7 +295,9 @@ export function toEditorJson(doc: PostDocument): EditorPostJson {
       doc.publication.status === 'published'
         ? doc.publication.publishedAt.toISOString()
         : null,
-    blocks: doc.blocks,
+    blocks: body.blocks,
+    headings: body.headings,
+    markdown: body.markdown,
     updatedAt: doc.updatedAt.toISOString(),
   };
 }

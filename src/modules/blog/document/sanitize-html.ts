@@ -3,7 +3,7 @@ import sanitize from 'sanitize-html';
 import type { SanitizedHtml } from './blog.types';
 
 const OPTIONS: sanitize.IOptions = {
-  allowedTags: ['p', 'blockquote', 'ul', 'ol', 'li', 'br', 'strong', 'em', 'a'],
+  allowedTags: ['p', 'blockquote', 'ul', 'ol', 'li', 'br', 'strong', 'em', 'a', 'h1', 'h2', 'h3'],
   allowedAttributes: { a: ['href'] },
   allowedSchemes: ['http', 'https'],
   allowProtocolRelative: false,
@@ -27,7 +27,13 @@ const POST_OPTIONS: sanitize.IOptions = {
     'img',
     'hr',
   ],
-  allowedAttributes: { a: ['href'], img: ['src', 'alt', 'loading'] },
+  allowedAttributes: {
+    a: ['href'],
+    img: ['src', 'alt', 'loading'],
+    h1: ['id'],
+    h2: ['id'],
+    h3: ['id'],
+  },
   allowedClasses: { '*': ['pb-*'] },
   allowedSchemes: ['http', 'https'],
   allowProtocolRelative: false,

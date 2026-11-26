@@ -1,9 +1,9 @@
 import {
   BLOCK_KINDS,
   readBlocks,
-  renderBlocksHtml,
   toPublicBlocks,
 } from './block-registry';
+import { renderBlocksHtml } from './post-body';
 import {
   DraftRejected,
   type BlockId,
@@ -52,6 +52,17 @@ describe('BLOCK_KINDS', () => {
     expect(block).not.toHaveProperty('markdown');
   });
 
+  it('keeps a markdown heading inside rich text', () => {
+    const block = BLOCK_KINDS.rich_text.parse({ markdown: '## Readings' }, new Map(), id);
+
+    expect(block.doc.content[0]).toEqual({
+      type: 'heading',
+      level: 2,
+      content: [{ type: 'text', text: 'Readings' }],
+    });
+    expect(block.html).toBe('<h2>Readings</h2>');
+  });
+
   it('rejects rich text that sends markdown and a doc', () => {
     expect(() =>
       BLOCK_KINDS.rich_text.parse(
@@ -69,12 +80,12 @@ describe('renderBlocksHtml', () => {
 
     expect(html).toBe(
       [
-        '<h2 class="pb-heading">Open roles</h2>',
+        '<h2 id="open-roles" class="pb-heading">Open roles</h2>',
         '<div class="pb-rich-text"><p>We are <strong>hiring</strong>.</p></div>',
         '<figure class="pb-image"><img src="https://media.example.com/photo.png" alt="The team" loading="lazy" /></figure>',
         '<div class="pb-media-text pb-media-text--image-left">' +
           '<figure class="pb-media-text__media"><img src="https://media.example.com/photo.png" alt="The team" loading="lazy" /></figure>' +
-          '<div class="pb-media-text__body"><h2 class="pb-media-text__heading">Why join us</h2><p>We are <strong>hiring</strong>.</p></div>' +
+          '<div class="pb-media-text__body"><h2 id="why-join-us" class="pb-media-text__heading">Why join us</h2><p>We are <strong>hiring</strong>.</p></div>' +
           '</div>',
         '<hr class="pb-divider" />',
       ].join('\n'),
@@ -96,7 +107,7 @@ describe('renderBlocksHtml', () => {
     ]);
 
     expect(html).toBe(
-      '<h1 class="pb-heading">One</h1>\n<h3 class="pb-heading">Three</h3>',
+      '<h1 id="one" class="pb-heading">One</h1>\n<h3 id="three" class="pb-heading">Three</h3>',
     );
   });
 
@@ -158,10 +169,12 @@ describe('renderBlocksHtml', () => {
       // The attack text survives only as escaped text, so the only tags are ours.
       const tags = [...html.matchAll(/<([a-z0-9]+)/g)].map((match) => match[1]);
       expect(tags).toEqual(['h2', 'figure', 'img', 'div', 'div', 'h2', 'p', 'strong']);
-      expect(html).toContain('<h2 class="pb-heading">&lt;script&gt;alert(1)&lt;/script&gt; &amp; "more"</h2>');
+      expect(html).toContain(
+        '<h2 id="scriptalert1script--more" class="pb-heading">&lt;script&gt;alert(1)&lt;/script&gt; &amp; "more"</h2>',
+      );
       expect(html).toContain('alt="&quot;&gt;&lt;img src=x onerror=alert(1)&gt;"');
       expect(html).toContain(
-        '<h2 class="pb-media-text__heading">&lt;img src=x onerror=alert(1)&gt;</h2>',
+        '<h2 id="img-srcx-onerroralert1" class="pb-media-text__heading">&lt;img src=x onerror=alert(1)&gt;</h2>',
       );
     });
 
@@ -207,7 +220,7 @@ describe('renderBlocksHtml', () => {
       expect([...tags].sort()).toEqual(
         ['div', 'figure', 'h2', 'hr', 'img', 'p', 'strong'].sort(),
       );
-      expect([...attributes].sort()).toEqual(['alt', 'class', 'loading', 'src']);
+      expect([...attributes].sort()).toEqual(['alt', 'class', 'id', 'loading', 'src']);
     });
   });
 });
@@ -220,7 +233,7 @@ describe('toPublicBlocks and renderBlocksHtml together', () => {
     ]);
 
     expect(renderBlocksHtml(toPublicBlocks(stored))).toBe(
-      '<h3 class="pb-heading">Stored</h3>\n<hr class="pb-divider" />',
+      '<h3 id="stored" class="pb-heading">Stored</h3>\n<hr class="pb-divider" />',
     );
   });
 });

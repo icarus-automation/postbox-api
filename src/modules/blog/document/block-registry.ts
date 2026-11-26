@@ -15,8 +15,9 @@ import {
   type PublicImage,
   type SanitizedHtml,
 } from './blog.types';
+import { baseHeadingAnchor, isHeadingAnchor } from './heading-anchor';
 import { escapeText, parseProseDoc, renderProse, markdownToDoc } from './rich-text.codec';
-import { sanitizeHtml, sanitizePostHtml } from './sanitize-html';
+import { sanitizeHtml } from './sanitize-html';
 
 export type MediaIndex = ReadonlyMap<MediaId, MediaRef>;
 
@@ -25,7 +26,12 @@ const HEADING_TEXT_MAX = 200;
 
 export type BlockKindRow<K extends Block['kind']> = {
   kind: K;
-  parse(raw: unknown, media: MediaIndex, id: BlockId): Extract<Block, { kind: K }>;
+  parse(
+    raw: unknown,
+    media: MediaIndex,
+    id: BlockId,
+    previous?: readonly Block[],
+  ): Extract<Block, { kind: K }>;
   fromStored(raw: unknown): Extract<Block, { kind: K }>;
   toPublic(block: Extract<Block, { kind: K }>): Extract<PublicBlock, { kind: K }>;
   // The block's markup, with the pb-* class names a site styles. renderBlocksHtml
@@ -278,13 +284,15 @@ export const BLOCK_KINDS: { [K in Block['kind']]: BlockKindRow<K> } = {
   },
   heading: {
     kind: 'heading',
-    parse(raw, _media, id) {
+    parse(raw, _media, id, previous) {
       if (!isRecord(raw)) throw new DraftRejected('Heading block is invalid');
+      const text = plainHeading(raw.text);
       return {
         id,
         kind: 'heading',
         level: headingLevel(raw.level),
-        text: plainHeading(raw.text),
+        text,
+        anchor: headingAnchor(raw.anchor, text, id, previous),
       };
     },
     fromStored(raw) {
@@ -296,7 +304,17 @@ export const BLOCK_KINDS: { [K in Block['kind']]: BlockKindRow<K> } = {
       ) {
         throw new Error('Stored block is invalid');
       }
-      return { id: raw.id as BlockId, kind: 'heading', level: raw.level, text: raw.text };
+      const anchor =
+        typeof raw.anchor === 'string' && isHeadingAnchor(raw.anchor)
+          ? raw.anchor
+          : baseHeadingAnchor(raw.text);
+      return {
+        id: raw.id as BlockId,
+        kind: 'heading',
+        level: raw.level,
+        text: raw.text,
+        anchor,
+      };
     },
     toPublic(block) {
       return { kind: 'heading', level: block.level, text: block.text };
@@ -328,6 +346,23 @@ function kindRow(kind: string): BlockKindRow<Block['kind']> | undefined {
   return BLOCK_KINDS[kind as Block['kind']] as BlockKindRow<Block['kind']>;
 }
 
+function headingAnchor(
+  raw: unknown,
+  text: string,
+  id: BlockId,
+  previous: readonly Block[] | undefined,
+): string {
+  if (raw === undefined || raw === null || raw === '') {
+    const prior = previous?.find((block) => block.id === id && block.kind === 'heading');
+    if (prior && prior.kind === 'heading') return prior.anchor;
+    return baseHeadingAnchor(text);
+  }
+  if (typeof raw !== 'string' || !isHeadingAnchor(raw)) {
+    throw new DraftRejected('Heading anchor is invalid');
+  }
+  return raw;
+}
+
 function takeBlockId(raw: unknown, seen: Set<string>): BlockId {
   if (raw === undefined || raw === null) {
     const id = newBlockId();
@@ -342,7 +377,11 @@ function takeBlockId(raw: unknown, seen: Set<string>): BlockId {
   return raw as BlockId;
 }
 
-export function parseBlocks(raw: unknown, media: MediaIndex): Block[] {
+export function parseBlocks(
+  raw: unknown,
+  media: MediaIndex,
+  previous?: readonly Block[],
+): Block[] {
   if (!Array.isArray(raw)) throw new DraftRejected('Blocks must be an array');
   if (raw.length > MAX_BLOCKS) {
     throw new DraftRejected('A document can have at most 100 blocks');
@@ -354,7 +393,7 @@ export function parseBlocks(raw: unknown, media: MediaIndex): Block[] {
     }
     const row = kindRow(item.kind);
     if (!row) throw new DraftRejected('Block kind is invalid');
-    return row.parse(item, media, takeBlockId(item.id, seen));
+    return row.parse(item, media, takeBlockId(item.id, seen), previous);
   });
 }
 
@@ -375,17 +414,6 @@ export function toPublicBlocks(blocks: Block[]): PublicBlock[] {
     const row = BLOCK_KINDS[block.kind] as BlockKindRow<typeof block.kind>;
     return row.toPublic(block);
   });
-}
-
-/** The whole post body as one sanitized string. Title and images beside it stay the site's. */
-export function renderBlocksHtml(blocks: PublicBlock[]): SanitizedHtml {
-  const markup = blocks
-    .map((block) => {
-      const row = BLOCK_KINDS[block.kind] as BlockKindRow<typeof block.kind>;
-      return row.toHtml(block);
-    })
-    .join('\n');
-  return sanitizePostHtml(markup);
 }
 
 export function collectMediaIds(
