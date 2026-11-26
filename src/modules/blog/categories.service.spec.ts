@@ -95,22 +95,107 @@ describe('CategoriesService', () => {
     expect(create).not.toHaveBeenCalled();
   });
 
-  it('renames with a new slug and tells the site about its published posts', async () => {
+  it('renames and keeps the slug, and tells the site about its published posts', async () => {
     findFirst
-      .mockResolvedValueOnce(storedCategory() as never)
+      .mockResolvedValueOnce(storedCategory({ name: 'Billing', slug: 'billing' }) as never)
       .mockResolvedValueOnce(null);
     prisma.post.findMany.mockResolvedValue([{ id: 'post-1' }] as never);
 
     const category = await service.renameCategory('organization-a', 'category-1', {
-      name: 'Company news',
+      name: 'Billing & Payments',
     });
 
-    expect(category).toMatchObject({ name: 'Company news', slug: 'company-news' });
+    expect(category).toMatchObject({ name: 'Billing & Payments', slug: 'billing' });
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: { name: 'Billing & Payments', slug: 'billing' },
+      }),
+    );
     expect(prisma.post.findMany).toHaveBeenCalledWith({
       where: { organizationId: 'organization-a', categoryId: 'category-1', status: 'published' },
       select: { id: true },
     });
     expect(posts.announceUpdatedPosts).toHaveBeenCalledWith('organization-a', ['post-1']);
+  });
+
+  it('changes the slug when the edit sets one, and tells the site', async () => {
+    findFirst
+      .mockResolvedValueOnce(storedCategory({ name: 'Billing', slug: 'billing' }) as never)
+      .mockResolvedValueOnce(null);
+    prisma.post.findMany.mockResolvedValue([{ id: 'post-1' }] as never);
+
+    const category = await service.renameCategory('organization-a', 'category-1', {
+      name: 'Billing',
+      slug: 'utility-billing',
+    });
+
+    expect(category).toMatchObject({ name: 'Billing', slug: 'utility-billing' });
+    expect(posts.announceUpdatedPosts).toHaveBeenCalledWith('organization-a', ['post-1']);
+  });
+
+  it('refuses a slug another category already uses', async () => {
+    findFirst
+      .mockResolvedValueOnce(storedCategory({ name: 'Billing', slug: 'billing' }) as never)
+      .mockResolvedValueOnce({ id: 'category-2' } as never);
+
+    await expect(
+      service.renameCategory('organization-a', 'category-1', {
+        name: 'Billing',
+        slug: 'payments',
+      }),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(update).not.toHaveBeenCalled();
+    expect(posts.announceUpdatedPosts).not.toHaveBeenCalled();
+  });
+
+  it('refuses a slug that is not lowercase kebab-case', async () => {
+    findFirst.mockResolvedValueOnce(storedCategory() as never);
+
+    await expect(
+      service.renameCategory('organization-a', 'category-1', {
+        name: 'News',
+        slug: 'Big News',
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('leaves a category alone when the name and slug are unchanged', async () => {
+    findFirst.mockResolvedValueOnce(storedCategory() as never);
+
+    const category = await service.renameCategory('organization-a', 'category-1', {
+      name: 'News',
+      slug: 'news',
+    });
+
+    expect(category).toMatchObject({ name: 'News', slug: 'news' });
+    expect(update).not.toHaveBeenCalled();
+    expect(posts.announceUpdatedPosts).not.toHaveBeenCalled();
+  });
+
+  it('stores an explicit slug on create', async () => {
+    findFirst.mockResolvedValue(null);
+
+    const category = await service.createCategory('organization-a', {
+      name: 'Billing',
+      slug: 'utility-billing',
+    });
+
+    expect(category.slug).toBe('utility-billing');
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ name: 'Billing', slug: 'utility-billing' }) as unknown,
+      }),
+    );
+  });
+
+  it('refuses a create slug another category already uses', async () => {
+    findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'category-9' } as never);
+
+    await expect(
+      service.createCategory('organization-a', { name: 'Billing', slug: 'billing' }),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(create).not.toHaveBeenCalled();
   });
 
   it('refuses a rename to a name another category has', async () => {
