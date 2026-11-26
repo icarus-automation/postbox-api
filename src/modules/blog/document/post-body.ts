@@ -1,9 +1,24 @@
 import GithubSlugger from 'github-slugger';
 
-import type { Block, PostHeading, ProseBlock, ProseDoc, PublicBlock, SanitizedHtml } from './blog.types';
-import { BLOCK_KINDS, toPublicBlocks } from './block-registry';
+import type {
+  Block,
+  HeadingLevel,
+  PostHeading,
+  ProseBlock,
+  ProseDoc,
+  PublicBlock,
+  PublicImage,
+  SanitizedHtml,
+} from './blog.types';
+import { BLOCK_KINDS, mediaTextHtml } from './block-registry';
 import { claimHeadingId } from './heading-anchor';
-import { escapeText, inlinePlainText, proseToMarkdown } from './rich-text.codec';
+import {
+  escapeMarkdownText,
+  escapeText,
+  inlinePlainText,
+  proseToMarkdown,
+  renderProse,
+} from './rich-text.codec';
 import { sanitizePostHtml } from './sanitize-html';
 
 type State = {
@@ -59,8 +74,7 @@ function applyHeadingIds(html: string, ids: readonly string[]): string {
 
 function imageMarkdown(image: { url: string; alt: string } | null): string {
   if (!image) return '';
-  const alt = image.alt.replace(/[[\]]/g, (character) => `\\${character}`);
-  return `![${alt}](${image.url})`;
+  return `![${escapeMarkdownText(image.alt)}](${image.url})`;
 }
 
 function pushMarkdown(parts: string[], value: string): void {
@@ -71,12 +85,10 @@ function projectItems(items: readonly RenderItem[]): {
   headings: PostHeading[];
   markdown: string;
   html: SanitizedHtml;
-  inners: Array<SanitizedHtml | null>;
 } {
   const state: State = { slugger: new GithubSlugger(), headings: [] };
   const markup: string[] = [];
   const markdown: string[] = [];
-  const inners: Array<SanitizedHtml | null> = [];
 
   for (const item of items) {
     const block = item.block;
@@ -84,8 +96,7 @@ function projectItems(items: readonly RenderItem[]): {
       const id = claim(state, block.level, block.text, item.anchor);
       const raw = BLOCK_KINDS.heading.toHtml(block);
       markup.push(applyHeadingIds(raw, [id]));
-      pushMarkdown(markdown, `${'#'.repeat(block.level)} ${block.text}`);
-      inners.push(null);
+      pushMarkdown(markdown, `${'#'.repeat(block.level)} ${escapeMarkdownText(block.text)}`);
       continue;
     }
     if (block.kind === 'rich_text') {
@@ -93,7 +104,6 @@ function projectItems(items: readonly RenderItem[]): {
       const inner = applyHeadingIds(block.html, ids) as SanitizedHtml;
       markup.push(BLOCK_KINDS.rich_text.toHtml({ ...block, html: inner }));
       pushMarkdown(markdown, proseToMarkdown(block.doc));
-      inners.push(inner);
       continue;
     }
     if (block.kind === 'media_text') {
@@ -106,29 +116,25 @@ function projectItems(items: readonly RenderItem[]): {
       markup.push(applyHeadingIds(raw, ids));
       const parts = [
         imageMarkdown(block.image),
-        block.heading === null ? '' : `## ${block.heading}`,
+        block.heading === null ? '' : `## ${escapeMarkdownText(block.heading)}`,
         proseToMarkdown(block.doc),
       ].filter((part) => part.length > 0);
       pushMarkdown(markdown, parts.join('\n\n'));
-      inners.push(inner);
       continue;
     }
     if (block.kind === 'image') {
       markup.push(BLOCK_KINDS.image.toHtml(block));
       pushMarkdown(markdown, imageMarkdown(block.image));
-      inners.push(null);
       continue;
     }
     markup.push(BLOCK_KINDS.divider.toHtml(block));
     pushMarkdown(markdown, '---');
-    inners.push(null);
   }
 
   return {
     headings: state.headings,
     markdown: markdown.join('\n\n'),
     html: sanitizePostHtml(markup.join('\n')),
-    inners,
   };
 }
 
@@ -137,29 +143,79 @@ export function renderBlocksHtml(blocks: readonly PublicBlock[]): SanitizedHtml 
   return projectItems(blocks.map((block) => ({ block }))).html;
 }
 
+function slotImage(block: Extract<Block, { kind: 'image' | 'media_text' }>): PublicImage | null {
+  const media = block.image.media;
+  if (!media) return null;
+  return { url: media.url, alt: media.alt, contentType: media.contentType };
+}
+
+function takeProseHeading(state: State): (level: HeadingLevel, plain: string) => string {
+  return (level, plain) => {
+    const id = claimHeadingId(state.slugger, plain);
+    state.headings.push({ level, text: plain, id });
+    return id;
+  };
+}
+
+function mediaHeadingTag(state: State, heading: string): string {
+  const id = claimHeadingId(state.slugger, heading);
+  state.headings.push({ level: 2, text: heading, id });
+  return `<h2 id="${escapeText(id)}" class="pb-media-text__heading">${escapeText(heading)}</h2>`;
+}
+
 /**
- * Ids, markdown and html for one post. A heading block's stored anchor wins over
- * its current text. Rich text and media headings are slugged as they are read.
- * The slugger runs once, in document order, so a repeated name gets `-1`, `-2`.
+ * Ids, markdown and html for one post. One slugger walks the blocks in order.
+ * A heading block's stored anchor wins over its current text. Rich text is
+ * rendered from the doc, not from the html stored at write time.
  */
 export function projectPostBody(blocks: readonly Block[]): ProjectedPostBody {
-  const publicBlocks = toPublicBlocks([...blocks]);
-  const projected = projectItems(
-    blocks.map((block, index) => ({
-      block: publicBlocks[index],
-      anchor: block.kind === 'heading' ? block.anchor : undefined,
-    })),
-  );
-  return {
-    headings: projected.headings,
-    markdown: projected.markdown,
-    html: projected.html,
-    blocks: blocks.map((block, index) => {
-      const inner = projected.inners[index];
-      if ((block.kind === 'rich_text' || block.kind === 'media_text') && inner !== null) {
-        return { ...block, html: inner };
-      }
+  const state: State = { slugger: new GithubSlugger(), headings: [] };
+  const onHeading = takeProseHeading(state);
+  const markup: string[] = [];
+  const markdown: string[] = [];
+  const rendered = blocks.map((block) => {
+    if (block.kind === 'heading') {
+      const id = state.slugger.slug(block.anchor);
+      state.headings.push({ level: block.level, text: block.text, id });
+      markup.push(
+        `<h${block.level} id="${escapeText(id)}" class="pb-heading">${escapeText(block.text)}</h${block.level}>`,
+      );
+      pushMarkdown(markdown, `${'#'.repeat(block.level)} ${escapeMarkdownText(block.text)}`);
       return block;
-    }),
+    }
+    if (block.kind === 'rich_text') {
+      const inner = sanitizePostHtml(renderProse(block.doc, onHeading));
+      markup.push(`<div class="pb-rich-text">${inner}</div>`);
+      pushMarkdown(markdown, proseToMarkdown(block.doc));
+      return { ...block, html: inner };
+    }
+    if (block.kind === 'media_text') {
+      const headingHtml = block.heading === null ? '' : mediaHeadingTag(state, block.heading);
+      const inner = sanitizePostHtml(renderProse(block.doc, onHeading));
+      markup.push(mediaTextHtml(block.side, slotImage(block), headingHtml, inner));
+      const parts = [
+        imageMarkdown(slotImage(block)),
+        block.heading === null ? '' : `## ${escapeMarkdownText(block.heading)}`,
+        proseToMarkdown(block.doc),
+      ].filter((part) => part.length > 0);
+      pushMarkdown(markdown, parts.join('\n\n'));
+      return { ...block, html: inner };
+    }
+    if (block.kind === 'image') {
+      const image = slotImage(block);
+      markup.push(BLOCK_KINDS.image.toHtml({ kind: 'image', image }));
+      pushMarkdown(markdown, imageMarkdown(image));
+      return block;
+    }
+    markup.push(BLOCK_KINDS.divider.toHtml({ kind: 'divider' }));
+    pushMarkdown(markdown, '---');
+    return block;
+  });
+
+  return {
+    headings: state.headings,
+    markdown: markdown.join('\n\n'),
+    html: sanitizePostHtml(markup.join('\n')),
+    blocks: rendered,
   };
 }

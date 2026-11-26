@@ -1,10 +1,23 @@
 import { BadRequestException, ConflictException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { mock, mockDeep, mockReset } from 'jest-mock-extended';
 
 import type { PrismaService } from '../../core/database/prisma.service';
 import { CategoriesService } from './categories.service';
 import { PostsService } from './posts.service';
 import { TagsService } from './tags.service';
+
+function categorySlugViolation() {
+  return new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+    code: 'P2002',
+    clientVersion: 'test',
+    meta: {
+      driverAdapterError: {
+        cause: { constraint: { index: 'categories_organization_id_slug_key' } },
+      },
+    },
+  });
+}
 
 function storedCategory(overrides: Record<string, unknown> = {}) {
   return {
@@ -143,7 +156,7 @@ describe('CategoriesService', () => {
         name: 'Billing',
         slug: 'payments',
       }),
-    ).rejects.toBeInstanceOf(ConflictException);
+    ).rejects.toThrow('Another category already uses payments');
     expect(update).not.toHaveBeenCalled();
     expect(posts.announceUpdatedPosts).not.toHaveBeenCalled();
   });
@@ -156,7 +169,7 @@ describe('CategoriesService', () => {
         name: 'News',
         slug: 'Big News',
       }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toThrow('Slug is invalid');
     expect(update).not.toHaveBeenCalled();
   });
 
@@ -187,6 +200,30 @@ describe('CategoriesService', () => {
         data: expect.objectContaining({ name: 'Billing', slug: 'utility-billing' }) as unknown,
       }),
     );
+  });
+
+  it('keeps the slug when the edit sends a blank one', async () => {
+    findFirst
+      .mockResolvedValueOnce(storedCategory({ name: 'Billing', slug: 'billing' }) as never)
+      .mockResolvedValueOnce(null);
+    prisma.post.findMany.mockResolvedValue([{ id: 'post-1' }] as never);
+
+    const category = await service.renameCategory('organization-a', 'category-1', {
+      name: 'Billing & Payments',
+      slug: '  ',
+    });
+
+    expect(category).toMatchObject({ name: 'Billing & Payments', slug: 'billing' });
+    expect(posts.announceUpdatedPosts).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports a conflict when an explicit slug loses a race', async () => {
+    findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce(null);
+    create.mockRejectedValueOnce(categorySlugViolation());
+
+    await expect(
+      service.createCategory('organization-a', { name: 'Billing', slug: 'billing' }),
+    ).rejects.toThrow('Another category already uses billing');
   });
 
   it('refuses a create slug another category already uses', async () => {

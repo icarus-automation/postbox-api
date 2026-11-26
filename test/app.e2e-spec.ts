@@ -7,7 +7,7 @@ import { App } from 'supertest/types';
 
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/core/database/prisma.service';
-import { utilityBillingBlocks } from './utility-billing.fixture';
+import { utilityBillingBlocks } from '../src/modules/blog/document/utility-billing.fixture';
 
 const leadFields = [
   {
@@ -592,6 +592,9 @@ describe('Application authentication (e2e)', () => {
       };
       expect(postCount).toHaveBeenCalledWith({ where });
       expect(postFindMany).toHaveBeenCalledWith(expect.objectContaining({ where }));
+      const listed = response.body as { data: Record<string, unknown>[] };
+      expect(listed.data[0]).not.toHaveProperty('markdown');
+      expect(listed.data[0]).not.toHaveProperty('headings');
       expect(response.body).toEqual({
         data: [
           {
@@ -745,7 +748,9 @@ describe('Application authentication (e2e)', () => {
       expect(body.html).toContain('id="readings"');
       expect(body.html).toContain('id="readings-1"');
       expect(body.markdown).toContain('1. Photograph the dials');
-      expect(body.markdown).toContain('   - Include the meter number');
+      expect(
+        body.markdown.split('\n').find((line) => line.includes('Include the meter number')),
+      ).toBe('  - Include the meter number');
       expect(body.markdown).not.toMatch(/<\/?(p|strong|em|h[1-6]|ul|ol|li)\b/i);
       expect(body.headings.map((heading) => heading.id)).toEqual(
         [...body.html.matchAll(/<h[1-3]\b[^>]*id="([^"]+)"/gi)].map((match) => match[1]),

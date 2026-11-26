@@ -35,6 +35,5 @@ export function claimHeadingId(
   anchor?: string,
 ): string {
   if (anchor !== undefined) return slugger.slug(anchor);
-  const pure = pureHeadingSlug(text);
-  return slugger.slug(pure.length > 0 ? text : 'section');
+  return slugger.slug(baseHeadingAnchor(text));
 }

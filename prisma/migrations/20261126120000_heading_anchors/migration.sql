@@ -22,9 +22,6 @@ BEGIN
     END IF;
   END LOOP;
   out := replace(out, ' ', '-');
-  IF out = '' THEN
-    RETURN 'section';
-  END IF;
   RETURN out;
 END;
 $$;
@@ -49,7 +46,12 @@ BEGIN
       block := jsonb_set(
         block,
         '{anchor}',
-        to_jsonb(pb_github_slug(COALESCE(block->>'text', ''))),
+        to_jsonb(
+          CASE pb_github_slug(COALESCE(block->>'text', ''))
+            WHEN '' THEN 'section'
+            ELSE pb_github_slug(COALESCE(block->>'text', ''))
+          END
+        ),
         true
       );
     END IF;

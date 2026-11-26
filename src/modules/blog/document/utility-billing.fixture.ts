@@ -1,5 +1,5 @@
-import type { Block } from '../src/modules/blog/document/blog.types';
-import { parseBlocks } from '../src/modules/blog/document/block-registry';
+import type { Block } from './blog.types';
+import { parseBlocks } from './block-registry';
 
 const STEPS = [
   'Read the meter in this order.',

@@ -184,6 +184,23 @@ function imageHtml(image: PublicImage): string {
   return `<img src="${escapeText(image.url)}" alt="${escapeText(image.alt)}" loading="lazy">`;
 }
 
+// Markup follows the page: the image comes first when it sits on the left, so
+// the layout holds even where the site styles nothing.
+export function mediaTextHtml(
+  side: ImageSide,
+  image: PublicImage | null,
+  headingHtml: string,
+  bodyHtml: string,
+): string {
+  const media = image
+    ? `<figure class="pb-media-text__media">${imageHtml(image)}</figure>`
+    : '';
+  const body = `<div class="pb-media-text__body">${headingHtml}${bodyHtml}</div>`;
+  const sideName = side === 'image_left' ? 'image-left' : 'image-right';
+  const parts = side === 'image_left' ? media + body : body + media;
+  return `<div class="pb-media-text pb-media-text--${sideName}">${parts}</div>`;
+}
+
 export const BLOCK_KINDS: { [K in Block['kind']]: BlockKindRow<K> } = {
   rich_text: {
     kind: 'rich_text',
@@ -268,18 +285,10 @@ export const BLOCK_KINDS: { [K in Block['kind']]: BlockKindRow<K> } = {
       };
     },
     toHtml(block) {
-      // Markup follows the page: the image comes first when it sits on the left, so
-      // the layout holds even where the site styles nothing.
-      const media = block.image
-        ? `<figure class="pb-media-text__media">${imageHtml(block.image)}</figure>`
-        : '';
       const heading = block.heading
         ? `<h2 class="pb-media-text__heading">${escapeText(block.heading)}</h2>`
         : '';
-      const body = `<div class="pb-media-text__body">${heading}${block.html}</div>`;
-      const side = block.side === 'image_left' ? 'image-left' : 'image-right';
-      const parts = block.side === 'image_left' ? media + body : body + media;
-      return `<div class="pb-media-text pb-media-text--${side}">${parts}</div>`;
+      return mediaTextHtml(block.side, block.image, heading, block.html);
     },
   },
   heading: {
