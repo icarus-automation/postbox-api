@@ -592,6 +592,9 @@ describe('Application authentication (e2e)', () => {
       };
       expect(postCount).toHaveBeenCalledWith({ where });
       expect(postFindMany).toHaveBeenCalledWith(expect.objectContaining({ where }));
+      const listed = response.body as { data: Record<string, unknown>[] };
+      expect(listed.data[0]).not.toHaveProperty('markdown');
+      expect(listed.data[0]).not.toHaveProperty('headings');
       expect(response.body).toEqual({
         data: [
           {

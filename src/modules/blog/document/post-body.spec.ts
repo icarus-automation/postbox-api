@@ -1,6 +1,14 @@
-import { DraftRejected, type OrganizationId } from './blog.types';
+import { DraftRejected, type OrganizationId, type SanitizedHtml } from './blog.types';
 import { parseBlocks } from './block-registry';
-import { applyFields, blankDraft, publishedEvent, toEditorJson, toPublicPost } from './post-document';
+import { baseHeadingAnchor, pureHeadingSlug } from './heading-anchor';
+import {
+  applyFields,
+  blankDraft,
+  changedInPublic,
+  publishedEvent,
+  toEditorJson,
+  toPublicPost,
+} from './post-document';
 import { projectPostBody } from './post-body';
 import { utilityBillingBlocks } from '../../../../test/utility-billing.fixture';
 
@@ -158,10 +166,91 @@ describe('heading anchors', () => {
       ],
       new Map(),
     );
+    const body = projectPostBody(blocks);
+    expect(body.headings.map((heading) => heading.id)).toEqual(['notes', 'notes-1', 'notes-2']);
+    const rich = body.blocks.find((block) => block.kind === 'rich_text');
+    expect(rich && rich.kind === 'rich_text' ? rich.html : '').toContain('id="notes-1"');
+    expect(body.html).toContain('id="notes-2"');
+  });
+
+  it('suffixes past an anchor that already took the next number', () => {
+    const blocks = parseBlocks(
+      [
+        { id: 'a', kind: 'heading', level: 2, text: 'Taken', anchor: 'readings-1' },
+        { id: 'b', kind: 'heading', level: 2, text: 'Readings', anchor: 'readings' },
+        { id: 'c', kind: 'heading', level: 2, text: 'Readings', anchor: 'readings' },
+      ],
+      new Map(),
+    );
     expect(projectPostBody(blocks).headings.map((heading) => heading.id)).toEqual([
-      'notes',
-      'notes-1',
-      'notes-2',
+      'readings-1',
+      'readings',
+      'readings-2',
     ]);
+  });
+
+  it('renders a rich text heading from the doc when the stored html is stale', () => {
+    const [block] = parseBlocks(
+      [{ id: 'b', kind: 'rich_text', markdown: '## Readings\n\nHello' }],
+      new Map(),
+    );
+    if (!block || block.kind !== 'rich_text') throw new Error('expected rich text');
+    const body = projectPostBody([{ ...block, html: '<p>stale</p>' as SanitizedHtml }]);
+    expect(body.html).toContain('id="readings"');
+    expect(body.html).toContain('Hello');
+    expect(body.html).not.toContain('stale');
+  });
+
+  it('keeps a heading id out of the markdown when the text contains a tag', () => {
+    const blocks = parseBlocks(
+      [{ id: 'a', kind: 'heading', level: 2, text: 'Open <roles>' }],
+      new Map(),
+    );
+    const body = projectPostBody(blocks);
+    expect(body.markdown).toBe('## Open &lt;roles&gt;');
+    expect(body.markdown).not.toContain('<roles');
+    expect(body.html).toContain('id="open-roles"');
+  });
+
+  it('treats an anchor change as a public change', () => {
+    let doc = blankDraft(ORGANIZATION);
+    doc = applyFields(
+      doc,
+      {
+        title: 'Notes',
+        blocks: [{ id: 'a', kind: 'heading', level: 2, text: 'Readings', anchor: 'readings' }],
+      },
+      { media: new Map() },
+    );
+    doc = {
+      ...doc,
+      publication: { status: 'published', publishedAt: new Date('2026-11-01T00:00:00.000Z') },
+    };
+    const edited = applyFields(
+      doc,
+      { blocks: [{ id: 'a', kind: 'heading', level: 2, text: 'Readings', anchor: 'meter' }] },
+      { media: new Map() },
+    );
+    expect(changedInPublic(doc, edited)).toBe(true);
+    expect(projectPostBody(edited.blocks).headings[0]).toEqual({
+      level: 2,
+      text: 'Readings',
+      id: 'meter',
+    });
+  });
+});
+
+describe('pure heading slugs', () => {
+  it('matches github-slugger, and stores section when the slug is empty', () => {
+    expect(pureHeadingSlug('Readings')).toBe('readings');
+    expect(pureHeadingSlug('Billing & Payments')).toBe('billing--payments');
+    expect(pureHeadingSlug('Open <roles>')).toBe('open-roles');
+    expect(pureHeadingSlug('Hello  World')).toBe('hello--world');
+    expect(pureHeadingSlug('Café')).toBe('café');
+    expect(pureHeadingSlug('C++')).toBe('c');
+    expect(pureHeadingSlug('foo_bar')).toBe('foo_bar');
+    expect(pureHeadingSlug(' section ')).toBe('-section-');
+    expect(pureHeadingSlug('???')).toBe('');
+    expect(baseHeadingAnchor('???')).toBe('section');
   });
 });

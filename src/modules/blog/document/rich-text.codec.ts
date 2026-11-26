@@ -14,6 +14,7 @@ import { MarkdownManager } from '@tiptap/markdown';
 
 import {
   DraftRejected,
+  type HeadingLevel,
   type HttpUrl,
   type ProseBlock,
   type ProseDoc,
@@ -160,39 +161,49 @@ function renderInline(inline: ProseInline): string {
   return html;
 }
 
-function renderBlock(block: ProseBlock): string {
+type HeadingId = (level: HeadingLevel, plain: string) => string;
+
+function renderBlock(block: ProseBlock, headingId?: HeadingId): string {
   if (block.type === 'paragraph') {
     return `<p>${(block.content ?? []).map(renderInline).join('')}</p>`;
   }
   if (block.type === 'heading') {
+    const plain = inlinePlainText(block.content);
+    const id = headingId?.(block.level, plain);
+    const idAttr = id ? ` id="${escapeText(id)}"` : '';
     const inner = (block.content ?? []).map(renderInline).join('');
-    return `<h${block.level}>${inner}</h${block.level}>`;
+    return `<h${block.level}${idAttr}>${inner}</h${block.level}>`;
   }
   if (block.type === 'blockquote') {
-    return `<blockquote>${block.content.map(renderBlock).join('')}</blockquote>`;
+    return `<blockquote>${block.content.map((child) => renderBlock(child, headingId)).join('')}</blockquote>`;
   }
   const tag = block.type === 'bulletList' ? 'ul' : 'ol';
   const items = block.content
-    .map((item) => `<li>${item.content.map(renderBlock).join('')}</li>`)
+    .map((item) => `<li>${item.content.map((child) => renderBlock(child, headingId)).join('')}</li>`)
     .join('');
   return `<${tag}>${items}</${tag}>`;
 }
 
-export function renderProse(doc: ProseDoc): string {
-  return doc.content.map(renderBlock).join('');
+/** Stored html has no ids. Pass `headingId` when a post-scoped slug should be written. */
+export function renderProse(doc: ProseDoc, headingId?: HeadingId): string {
+  return doc.content.map((block) => renderBlock(block, headingId)).join('');
 }
 
 export function inlinePlainText(content: readonly ProseInline[] | undefined): string {
   return (content ?? []).map((inline) => (inline.type === 'text' ? inline.text : '')).join('');
 }
 
-function escapeMarkdown(text: string): string {
-  return text.replace(/[\\`*_{}[\]]/g, (character) => `\\${character}`);
+/** Inline markdown text. A `<` cannot become a tag. */
+export function escapeMarkdownText(text: string): string {
+  return text
+    .replace(/[\\`*_{}[\]]/g, (character) => `\\${character}`)
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;');
 }
 
 function renderMarkdownInline(inline: ProseInline): string {
   if (inline.type === 'hardBreak') return '  \n';
-  let text = escapeMarkdown(inline.text);
+  let text = escapeMarkdownText(inline.text);
   const marks = inline.marks ?? [];
   const isBold = marks.some((mark) => mark.type === 'bold');
   const isItalic = marks.some((mark) => mark.type === 'italic');
@@ -209,11 +220,14 @@ function renderMarkdownBlock(block: ProseBlock): string {
     return (block.content ?? []).map(renderMarkdownInline).join('');
   }
   if (block.type === 'heading') {
-    const text = escapeMarkdown(inlinePlainText(block.content));
+    const text = escapeMarkdownText(inlinePlainText(block.content));
     return `${'#'.repeat(block.level)} ${text}`;
   }
   if (block.type === 'blockquote') {
-    const inner = block.content.map(renderMarkdownBlock).filter((part) => part.length > 0).join('\n\n');
+    const inner = block.content
+      .map((child) => renderMarkdownBlock(child))
+      .filter((part) => part.length > 0)
+      .join('\n\n');
     return inner
       .split('\n')
       .map((line) => `> ${line}`)
@@ -230,7 +244,7 @@ function renderMarkdownList(
     .map((item, index) => {
       const marker = ordered ? `${index + 1}.` : '-';
       const inner = item.content
-        .map(renderMarkdownBlock)
+        .map((child) => renderMarkdownBlock(child))
         .filter((part) => part.length > 0)
         .join('\n\n');
       const lines = inner.split('\n');
