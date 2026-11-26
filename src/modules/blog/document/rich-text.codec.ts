@@ -233,27 +233,28 @@ function renderMarkdownBlock(block: ProseBlock): string {
       .map((line) => `> ${line}`)
       .join('\n');
   }
-  return renderMarkdownList(block.content, block.type === 'orderedList', 0);
+  return renderMarkdownList(block.content, block.type === 'orderedList');
 }
 
 function renderMarkdownList(
   items: { content: ProseBlock[] }[],
   ordered: boolean,
-  depth: number,
 ): string {
-  const pad = '  '.repeat(depth);
   return items
     .map((item, index) => {
-      const marker = ordered ? `${index + 1}. ` : '- ';
-      const chunks = item.content
-        .map((child) =>
-          child.type === 'bulletList' || child.type === 'orderedList'
-            ? renderMarkdownList(child.content, child.type === 'orderedList', depth + 1)
-            : renderMarkdownBlock(child),
-        )
-        .filter((part) => part.length > 0);
-      const lines = chunks.join('\n').split('\n');
-      return [`${pad}${marker}${lines[0] ?? ''}`, ...lines.slice(1)].join('\n');
+      const marker = ordered ? `${index + 1}.` : '-';
+      const inner = item.content
+        .map((child) => renderMarkdownBlock(child))
+        .filter((part) => part.length > 0)
+        .join('\n\n');
+      const lines = inner.split('\n');
+      const pad = ' '.repeat(marker.length + 1);
+      const first = `${marker} ${lines[0] ?? ''}`;
+      const rest = lines
+        .slice(1)
+        .map((line) => (line.length === 0 ? '' : `${pad}${line}`))
+        .join('\n');
+      return rest.length > 0 ? `${first}\n${rest}` : first;
     })
     .join('\n');
 }

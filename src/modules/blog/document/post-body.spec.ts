@@ -10,7 +10,7 @@ import {
   toPublicPost,
 } from './post-document';
 import { projectPostBody } from './post-body';
-import { utilityBillingBlocks } from './utility-billing.fixture';
+import { utilityBillingBlocks } from '../../../../test/utility-billing.fixture';
 
 const ORGANIZATION = 'organization-a' as OrganizationId;
 
@@ -61,9 +61,7 @@ describe('utility billing post', () => {
       '## Questions',
     ]);
     expect(body.markdown).toContain('1. Photograph the dials');
-    expect(
-      body.markdown.split('\n').find((line) => line.includes('Include the meter number')),
-    ).toBe('  - Include the meter number');
+    expect(body.markdown).toContain('   - Include the meter number');
     expect(body.markdown).toContain('2. Enter the **digits** left to right');
     expect(body.markdown).toContain('- Weekday energy');
     expect(body.markdown).toContain('### When is my bill due?');
